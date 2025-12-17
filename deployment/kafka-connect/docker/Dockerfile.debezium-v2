@@ -6,26 +6,40 @@ WORKDIR /build
 # Create Maven project structure
 RUN mkdir -p src/main/java/com/example/debezium/smt
 
-# Copy pom.xml and Java source
-COPY smt/LegacyCharsetTransform/pom.xml .
-COPY smt/LegacyCharsetTransform/LegacyCharsetTransform.java src/main/java/com/example/debezium/smt/
+# Copy Java source
+COPY LegacyCharsetTransform.java src/main/java/com/example/debezium/smt/
+
+# Create pom.xml
+RUN cat > pom.xml <<'EOF'
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    <groupId>com.example.debezium</groupId>
+    <artifactId>legacy-charset-smt</artifactId>
+    <version>1.0.0</version>
+    <packaging>jar</packaging>
+    <properties>
+        <maven.compiler.source>11</maven.compiler.source>
+        <maven.compiler.target>11</maven.compiler.target>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    </properties>
+    <dependencies>
+        <dependency>
+            <groupId>org.apache.kafka</groupId>
+            <artifactId>connect-api</artifactId>
+            <version>3.6.0</version>
+            <scope>provided</scope>
+        </dependency>
+    </dependencies>
+</project>
+EOF
 
 # Build JAR
 RUN mvn clean package -DskipTests -q
 
-# Stage 2: Build IIDR CDC Sink Connector
-FROM maven:3.9-eclipse-temurin-11 AS sink-builder
-
-WORKDIR /build
-
-# Copy pom.xml and Java sources
-COPY sink/IidrCdcSinkConnector/pom.xml .
-COPY sink/IidrCdcSinkConnector/src/ src/
-
-# Build JAR
-RUN mvn clean package -DskipTests -q
-
-# Stage 3: Final Kafka Connect image
+# Stage 2: Final Kafka Connect image
 FROM confluentinc/cp-kafka-connect:7.6.1
 
 USER root
@@ -36,11 +50,11 @@ RUN confluent-hub install --no-prompt confluentinc/kafka-connect-s3:10.6.7
 RUN confluent-hub install --no-prompt confluentinc/connect-transforms:1.4.6
 RUN confluent-hub install --no-prompt mongodb/kafka-connect-mongodb:2.0.0
 
-# Install debezium for Oracle
+# Install debezium for Oracle 
 RUN wget https://repo1.maven.org/maven2/io/debezium/debezium-connector-oracle/2.6.1.Final/debezium-connector-oracle-2.6.1.Final-plugin.tar.gz
 RUN tar zxvf debezium-connector-oracle-2.6.1.Final-plugin.tar.gz -C /usr/share/java/
 RUN wget https://repo1.maven.org/maven2/com/oracle/database/xml/xdb/21.11.0.0/xdb-21.11.0.0.jar -P /usr/share/java/debezium-connector-oracle/
-# Install debezium for MySQL
+# Install debezium for MySQL 
 RUN wget https://repo1.maven.org/maven2/io/debezium/debezium-connector-mysql/2.6.1.Final/debezium-connector-mysql-2.6.1.Final-plugin.tar.gz
 RUN tar zxvf debezium-connector-mysql-2.6.1.Final-plugin.tar.gz -C /usr/share/java/
 # Install debezium for SQLServer
@@ -63,7 +77,7 @@ RUN wget https://dlm.mariadb.com/2720710/Connectors/java/connector-java-3.1.2/ma
 ## clickhouse
 RUN wget https://github.com/ClickHouse/clickhouse-java/releases/download/v0.4.6/clickhouse-jdbc-0.4.6.jar -P /usr/share/confluent-hub-components/confluentinc-kafka-connect-jdbc/lib/
 ## sqlserver
-RUN wget --no-check-certificate https://download.microsoft.com/download/9/e/9/9e97cef4-4c64-484c-bd1b-192147912c47/enu/sqljdbc_12.6.1.0_enu.tar.gz
+RUN wget https://download.microsoft.com/download/9/e/9/9e97cef4-4c64-484c-bd1b-192147912c47/enu/sqljdbc_12.6.1.0_enu.tar.gz
 RUN tar zxvf sqljdbc_12.6.1.0_enu.tar.gz -C /usr/share/confluent-hub-components/confluentinc-kafka-connect-jdbc/lib
 RUN mv /usr/share/confluent-hub-components/confluentinc-kafka-connect-jdbc/lib/sqljdbc_12.6/enu/jars/* /usr/share/confluent-hub-components/confluentinc-kafka-connect-jdbc/lib/
 
@@ -77,12 +91,3 @@ COPY connect-distributed /usr/bin/connect-distributed
 
 # Copy LegacyCharsetTransform SMT JAR from builder stage
 COPY --from=smt-builder /build/target/legacy-charset-smt-1.0.0.jar /usr/share/java/legacy-charset-smt-1.0.0.jar
-
-# Create IIDR CDC Sink Connector plugin directory with JDBC drivers
-RUN mkdir -p /usr/share/java/iidr-cdc-sink-connector
-COPY --from=sink-builder /build/target/iidr-cdc-sink-connector-1.0.0.jar /usr/share/java/iidr-cdc-sink-connector/
-# Copy JDBC drivers to connector plugin directory
-RUN cp /usr/share/confluent-hub-components/confluentinc-kafka-connect-jdbc/lib/mariadb-java-client-*.jar /usr/share/java/iidr-cdc-sink-connector/ && \
-    cp /usr/share/confluent-hub-components/confluentinc-kafka-connect-jdbc/lib/mysql-connector-j-8.0.32/mysql-connector-j-8.0.32.jar /usr/share/java/iidr-cdc-sink-connector/ && \
-    cp /usr/share/confluent-hub-components/confluentinc-kafka-connect-jdbc/lib/postgresql-*.jar /usr/share/java/iidr-cdc-sink-connector/ && \
-    cp /usr/share/confluent-hub-components/confluentinc-kafka-connect-jdbc/lib/mssql-jdbc-*.jar /usr/share/java/iidr-cdc-sink-connector/ 2>/dev/null || true
