@@ -6,7 +6,9 @@
 	cluster cluster-delete deploy deploy-delete tools check-tools \
 	build-debezium-2.x-image build-debezium-3.4-image build-all-images \
 	deploy-debezium-3.4 deploy-dual all-debezium-3.4 all-dual \
-	e2e-2x e2e-3x e2e-dual register-2x register-3x verify-2x verify-3x clean-dual
+	e2e-2x e2e-3x e2e-dual register-2x register-3x verify-2x verify-3x clean-dual \
+	setup-datatype register-datatype-2x register-datatype-3x verify-datatype compare-datatype \
+	clean-datatype e2e-datatype-dual
 
 # Configuration
 KAFKA_CONNECT_URL ?= http://localhost:8083
@@ -109,6 +111,15 @@ help:
 	@echo "Dual Kafka Connect Services:"
 	@echo "  Debezium 2.x: dbrep-kafka-connect-cp-kafka-connect:8083"
 	@echo "  Debezium 3.x: dbrep-kafka-connect-v3-cp-kafka-connect:8083"
+	@echo ""
+	@echo "Data Type Comparison Testing:"
+	@echo "  make e2e-datatype-dual    Run complete datatype comparison test"
+	@echo "  make setup-datatype       Create DATATYPE_TEST table in Oracle"
+	@echo "  make register-datatype-2x Register datatype connectors on 2.x"
+	@echo "  make register-datatype-3x Register datatype connectors on 3.x"
+	@echo "  make verify-datatype      Show data from both datatype tables"
+	@echo "  make compare-datatype     Compare schemas and generate report"
+	@echo "  make clean-datatype       Delete datatype connectors"
 
 # Full E2E test (using Debezium 2.x by default)
 e2e: setup register verify
@@ -664,3 +675,130 @@ endif
 # Show pod status
 pods:
 	kubectl get pods -n $(NAMESPACE) -o wide
+
+# =============================================================================
+# Data Type Comparison Testing (Debezium 2.x vs 3.x)
+# =============================================================================
+
+# Full datatype comparison E2E test
+e2e-datatype-dual: setup-datatype register-datatype-2x register-datatype-3x verify-datatype compare-datatype
+	@echo "[OK] Datatype comparison test completed!"
+	@echo "[INFO] Results written to: $(HACK_DIR)/../docs/debezium-datatype-comparison-results.md"
+
+# Setup datatype test table in Oracle
+setup-datatype:
+	@echo "[INFO] Creating DATATYPE_TEST table in Oracle..."
+ifeq ($(LIGHTWEIGHT),1)
+	@POD=$$(kubectl get pods -n $(NAMESPACE) -l app=oracle-db -o jsonpath='{.items[0].metadata.name}') && \
+	kubectl cp $(HACK_DIR)/sql/oracle-datatype-test.sql $$POD:/tmp/datatype-test.sql -n $(NAMESPACE) && \
+	kubectl exec $$POD -n $(NAMESPACE) -- sqlplus -S sys/oracle@localhost:1521/$(ORACLE_PDB) as sysdba @/tmp/datatype-test.sql
+else
+	@kubectl cp $(HACK_DIR)/sql/oracle-datatype-test.sql $(ORACLE_POD):/tmp/datatype-test.sql -n $(NAMESPACE) && \
+	kubectl exec $(ORACLE_POD) -n $(NAMESPACE) -- sqlplus -S sys/oracle@localhost:1521/$(ORACLE_PDB) as sysdba @/tmp/datatype-test.sql
+endif
+	@echo "[OK] DATATYPE_TEST table created with test data"
+
+# Register datatype connectors on Debezium 2.x
+register-datatype-2x:
+	@echo "[INFO] Registering datatype connectors on Debezium 2.x..."
+	@POD=$$(kubectl get pod -l app.kubernetes.io/name=curl-client -n $(NAMESPACE) -o jsonpath='{.items[0].metadata.name}') && \
+	kubectl cp $(HACK_DIR)/source-debezium/oracle-datatype-test.json $$POD:/tmp/datatype-source-2x.json -n $(NAMESPACE) && \
+	kubectl exec $$POD -n $(NAMESPACE) -- curl -s --max-time 10 -X POST \
+		http://$(KAFKA_CONNECT_2X_SVC):8083/connectors \
+		-H "Content-Type: application/json" \
+		-d @/tmp/datatype-source-2x.json || echo "[ERROR] Failed to register source connector"
+	@echo "[INFO] Waiting 30s for initial snapshot..."
+	@sleep 30
+	@POD=$$(kubectl get pod -l app.kubernetes.io/name=curl-client -n $(NAMESPACE) -o jsonpath='{.items[0].metadata.name}') && \
+	kubectl cp $(HACK_DIR)/sink-jdbc/cdc_oracle_mariadb-datatype.json $$POD:/tmp/datatype-sink-2x.json -n $(NAMESPACE) && \
+	kubectl exec $$POD -n $(NAMESPACE) -- curl -s --max-time 10 -X POST \
+		http://$(KAFKA_CONNECT_2X_SVC):8083/connectors \
+		-H "Content-Type: application/json" \
+		-d @/tmp/datatype-sink-2x.json || echo "[ERROR] Failed to register sink connector"
+	@echo "[INFO] Waiting 10s for sync..."
+	@sleep 10
+	@echo "[OK] Debezium 2.x datatype connectors registered"
+
+# Register datatype connectors on Debezium 3.x
+register-datatype-3x:
+	@echo "[INFO] Registering datatype connectors on Debezium 3.x..."
+	@POD=$$(kubectl get pod -l app.kubernetes.io/name=curl-client -n $(NAMESPACE) -o jsonpath='{.items[0].metadata.name}') && \
+	kubectl cp $(HACK_DIR)/source-debezium/oracle-datatype-test-3x.json $$POD:/tmp/datatype-source-3x.json -n $(NAMESPACE) && \
+	kubectl exec $$POD -n $(NAMESPACE) -- curl -s --max-time 10 -X POST \
+		http://$(KAFKA_CONNECT_3X_SVC):8083/connectors \
+		-H "Content-Type: application/json" \
+		-d @/tmp/datatype-source-3x.json || echo "[ERROR] Failed to register source connector"
+	@echo "[INFO] Waiting 30s for initial snapshot..."
+	@sleep 30
+	@POD=$$(kubectl get pod -l app.kubernetes.io/name=curl-client -n $(NAMESPACE) -o jsonpath='{.items[0].metadata.name}') && \
+	kubectl cp $(HACK_DIR)/sink-jdbc/cdc_oracle_mariadb-datatype-3x.json $$POD:/tmp/datatype-sink-3x.json -n $(NAMESPACE) && \
+	kubectl exec $$POD -n $(NAMESPACE) -- curl -s --max-time 10 -X POST \
+		http://$(KAFKA_CONNECT_3X_SVC):8083/connectors \
+		-H "Content-Type: application/json" \
+		-d @/tmp/datatype-sink-3x.json || echo "[ERROR] Failed to register sink connector"
+	@echo "[INFO] Waiting 10s for sync..."
+	@sleep 10
+	@echo "[OK] Debezium 3.x datatype connectors registered"
+
+# Verify data in both datatype tables
+verify-datatype:
+	@echo "[INFO] === Debezium 2.x: datatype_test_2x ==="
+	@kubectl exec $(MARIADB_POD) -- mysql -h $(MARIADB_HOST) -u$(MARIADB_USER) -p$(MARIADB_PASS) -e \
+		"SELECT * FROM target_database.datatype_test_2x ORDER BY ID;" 2>/dev/null || echo "Table not found"
+	@echo ""
+	@echo "[INFO] === Debezium 3.x: datatype_test_3x ==="
+	@kubectl exec $(MARIADB_POD) -- mysql -h $(MARIADB_HOST) -u$(MARIADB_USER) -p$(MARIADB_PASS) -e \
+		"SELECT * FROM target_database.datatype_test_3x ORDER BY ID;" 2>/dev/null || echo "Table not found"
+
+# Compare schemas between 2.x and 3.x datatype tables
+compare-datatype:
+	@echo "[INFO] Comparing MariaDB schemas between Debezium 2.x and 3.x..."
+	@echo ""
+	@echo "# Debezium 2.x vs 3.x Data Type Comparison Results" > $(HACK_DIR)/../docs/debezium-datatype-comparison-results.md
+	@echo "" >> $(HACK_DIR)/../docs/debezium-datatype-comparison-results.md
+	@echo "Generated: $$(date '+%Y-%m-%d %H:%M:%S')" >> $(HACK_DIR)/../docs/debezium-datatype-comparison-results.md
+	@echo "" >> $(HACK_DIR)/../docs/debezium-datatype-comparison-results.md
+	@echo "## Schema Comparison" >> $(HACK_DIR)/../docs/debezium-datatype-comparison-results.md
+	@echo "" >> $(HACK_DIR)/../docs/debezium-datatype-comparison-results.md
+	@echo "### Debezium 2.x Schema (datatype_test_2x)" >> $(HACK_DIR)/../docs/debezium-datatype-comparison-results.md
+	@echo '```sql' >> $(HACK_DIR)/../docs/debezium-datatype-comparison-results.md
+	@kubectl exec $(MARIADB_POD) -- mysql -h $(MARIADB_HOST) -u$(MARIADB_USER) -p$(MARIADB_PASS) -e \
+		"DESCRIBE target_database.datatype_test_2x;" 2>/dev/null >> $(HACK_DIR)/../docs/debezium-datatype-comparison-results.md || echo "Table not found" >> $(HACK_DIR)/../docs/debezium-datatype-comparison-results.md
+	@echo '```' >> $(HACK_DIR)/../docs/debezium-datatype-comparison-results.md
+	@echo "" >> $(HACK_DIR)/../docs/debezium-datatype-comparison-results.md
+	@echo "### Debezium 3.x Schema (datatype_test_3x)" >> $(HACK_DIR)/../docs/debezium-datatype-comparison-results.md
+	@echo '```sql' >> $(HACK_DIR)/../docs/debezium-datatype-comparison-results.md
+	@kubectl exec $(MARIADB_POD) -- mysql -h $(MARIADB_HOST) -u$(MARIADB_USER) -p$(MARIADB_PASS) -e \
+		"DESCRIBE target_database.datatype_test_3x;" 2>/dev/null >> $(HACK_DIR)/../docs/debezium-datatype-comparison-results.md || echo "Table not found" >> $(HACK_DIR)/../docs/debezium-datatype-comparison-results.md
+	@echo '```' >> $(HACK_DIR)/../docs/debezium-datatype-comparison-results.md
+	@echo "" >> $(HACK_DIR)/../docs/debezium-datatype-comparison-results.md
+	@echo "## Row Count Verification" >> $(HACK_DIR)/../docs/debezium-datatype-comparison-results.md
+	@echo "" >> $(HACK_DIR)/../docs/debezium-datatype-comparison-results.md
+	@echo '```' >> $(HACK_DIR)/../docs/debezium-datatype-comparison-results.md
+	@kubectl exec $(MARIADB_POD) -- mysql -h $(MARIADB_HOST) -u$(MARIADB_USER) -p$(MARIADB_PASS) -e \
+		"SELECT '2.x' as version, COUNT(*) as rows FROM target_database.datatype_test_2x UNION ALL SELECT '3.x', COUNT(*) FROM target_database.datatype_test_3x;" 2>/dev/null >> $(HACK_DIR)/../docs/debezium-datatype-comparison-results.md || echo "Error" >> $(HACK_DIR)/../docs/debezium-datatype-comparison-results.md
+	@echo '```' >> $(HACK_DIR)/../docs/debezium-datatype-comparison-results.md
+	@echo "" >> $(HACK_DIR)/../docs/debezium-datatype-comparison-results.md
+	@echo "## Schema Differences" >> $(HACK_DIR)/../docs/debezium-datatype-comparison-results.md
+	@echo "" >> $(HACK_DIR)/../docs/debezium-datatype-comparison-results.md
+	@bash $(HACK_DIR)/scripts/compare-schemas.sh >> $(HACK_DIR)/../docs/debezium-datatype-comparison-results.md 2>/dev/null || echo "Run compare-schemas.sh manually for detailed diff" >> $(HACK_DIR)/../docs/debezium-datatype-comparison-results.md
+	@echo ""
+	@echo "[OK] Comparison report generated: docs/debezium-datatype-comparison-results.md"
+
+# Clean up datatype connectors
+clean-datatype:
+	@echo "[INFO] Deleting datatype connectors on Debezium 2.x..."
+	-@POD=$$(kubectl get pod -l app.kubernetes.io/name=curl-client -n $(NAMESPACE) -o jsonpath='{.items[0].metadata.name}') && \
+	kubectl exec $$POD -n $(NAMESPACE) -- curl -s -X DELETE \
+		http://$(KAFKA_CONNECT_2X_SVC):8083/connectors/source_cdc_oracle_datatype_v3
+	-@POD=$$(kubectl get pod -l app.kubernetes.io/name=curl-client -n $(NAMESPACE) -o jsonpath='{.items[0].metadata.name}') && \
+	kubectl exec $$POD -n $(NAMESPACE) -- curl -s -X DELETE \
+		http://$(KAFKA_CONNECT_2X_SVC):8083/connectors/sink_cdc_oracle_datatype_v3
+	@echo "[INFO] Deleting datatype connectors on Debezium 3.x..."
+	-@POD=$$(kubectl get pod -l app.kubernetes.io/name=curl-client -n $(NAMESPACE) -o jsonpath='{.items[0].metadata.name}') && \
+	kubectl exec $$POD -n $(NAMESPACE) -- curl -s -X DELETE \
+		http://$(KAFKA_CONNECT_3X_SVC):8083/connectors/source_cdc_oracle_datatype_3x_v3
+	-@POD=$$(kubectl get pod -l app.kubernetes.io/name=curl-client -n $(NAMESPACE) -o jsonpath='{.items[0].metadata.name}') && \
+	kubectl exec $$POD -n $(NAMESPACE) -- curl -s -X DELETE \
+		http://$(KAFKA_CONNECT_3X_SVC):8083/connectors/sink_cdc_oracle_datatype_3x_v3
+	@echo "[OK] Datatype connectors deleted"

@@ -146,7 +146,7 @@ kafka-dbsync/
 │   ├── sink-jdbc/        # JDBC sink connector configs
 │   └── sql/              # Database setup scripts
 ├── tools/              # Tool installers (kubectl, helm, kind, etc.)
-└── doc/                # Architecture diagrams (PlantUML)
+└── docs/               # Documentation and architecture diagrams
 ```
 
 ### Deployment Architecture
