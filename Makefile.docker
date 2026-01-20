@@ -16,6 +16,7 @@ build-v2:
 		deployment/kafka-connect/docker
 	@echo "[INFO] Loading image into kind cluster..."
 	kind load docker-image $(KAFKA_CONNECT_2X_IMAGE):$(KAFKA_CONNECT_2X_IMAGE_TAG) --name $(CLUSTER_NAME)
+	-kubectl rollout restart deployment/$(KAFKA_CONNECT_2X_SVC) -n $(NAMESPACE) 2>/dev/null || true
 	@echo "[OK] Debezium 2.x image built and loaded"
 	@echo "[INFO] Deploying Kafka Connect (Debezium 2.x)..."
 	helm dependency build deployment/kafka-connect

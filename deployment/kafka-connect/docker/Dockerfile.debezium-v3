@@ -78,7 +78,7 @@ RUN wget https://dlm.mariadb.com/2720710/Connectors/java/connector-java-3.1.2/ma
 ## clickhouse
 RUN wget https://github.com/ClickHouse/clickhouse-java/releases/download/v0.4.6/clickhouse-jdbc-0.4.6.jar -P /usr/share/confluent-hub-components/confluentinc-kafka-connect-jdbc/lib/
 ## sqlserver
-RUN wget https://download.microsoft.com/download/9/e/9/9e97cef4-4c64-484c-bd1b-192147912c47/enu/sqljdbc_12.6.1.0_enu.tar.gz
+RUN wget --no-check-certificate https://download.microsoft.com/download/9/e/9/9e97cef4-4c64-484c-bd1b-192147912c47/enu/sqljdbc_12.6.1.0_enu.tar.gz
 RUN tar zxvf sqljdbc_12.6.1.0_enu.tar.gz -C /usr/share/confluent-hub-components/confluentinc-kafka-connect-jdbc/lib
 RUN mv /usr/share/confluent-hub-components/confluentinc-kafka-connect-jdbc/lib/sqljdbc_12.6/enu/jars/* /usr/share/confluent-hub-components/confluentinc-kafka-connect-jdbc/lib/
 
@@ -93,10 +93,10 @@ COPY connect-distributed /usr/bin/connect-distributed
 # Copy LegacyCharsetTransform SMT JAR from builder stage
 COPY --from=smt-builder /build/target/legacy-charset-smt-1.0.0.jar /usr/share/java/legacy-charset-smt-1.0.0.jar
 
-# Create DB2 CDC Sink Connector plugin directory with JDBC drivers
-RUN mkdir -p /usr/share/java/db2-cdc-sink-connector
+# Create IIDR CDC Sink Connector plugin directory with JDBC drivers
+RUN mkdir -p /usr/share/java/iidr-cdc-sink-connector
 COPY --from=sink-builder /build/target/iidr-cdc-sink-connector-1.0.0.jar /usr/share/java/iidr-cdc-sink-connector/
-# Copy JDBC drivers to connector plugin directory
-RUN cp /usr/share/confluent-hub-components/confluentinc-kafka-connect-jdbc/lib/mariadb-java-client-*.jar /usr/share/java/db2-cdc-sink-connector/ && \
-    cp /usr/share/confluent-hub-components/confluentinc-kafka-connect-jdbc/lib/mysql-connector-j-8.0.32/mysql-connector-j-8.0.32.jar /usr/share/java/db2-cdc-sink-connector/ && \
-    cp /usr/share/confluent-hub-components/confluentinc-kafka-connect-jdbc/lib/mssql-jdbc-*.jar /usr/share/java/db2-cdc-sink-connector/ 2>/dev/null || true
+# Copy JDBC drivers to connector plugin directory (must be in same directory for classpath)
+RUN cp /usr/share/confluent-hub-components/confluentinc-kafka-connect-jdbc/lib/mariadb-java-client-*.jar /usr/share/java/iidr-cdc-sink-connector/ && \
+    cp /usr/share/confluent-hub-components/confluentinc-kafka-connect-jdbc/lib/mysql-connector-j-8.0.32/mysql-connector-j-8.0.32.jar /usr/share/java/iidr-cdc-sink-connector/ && \
+    cp /usr/share/confluent-hub-components/confluentinc-kafka-connect-jdbc/lib/mssql-jdbc-*.jar /usr/share/java/iidr-cdc-sink-connector/ 2>/dev/null || true

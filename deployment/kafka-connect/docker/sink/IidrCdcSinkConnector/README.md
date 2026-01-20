@@ -1,166 +1,31 @@
-# IBM InfoSphere Data Replication (IIDR) CDC Sink Connector
+# IIDR CDC Sink Connector
 
-A Kafka Connect Sink Connector for processing IIDR CDC events based on the IBM Journal Entry Type codes (A_ENTTYP).
+A Kafka Connect Sink Connector for processing IBM InfoSphere Data Replication (IIDR) CDC events.
 
-## Overview
+## Features
 
-This connector consumes CDC events from Kafka topics with IIDR-specific headers and writes them to a target JDBC database. It handles:
+- **A_ENTTYP Mapping**: Maps IBM Journal Entry Type codes to database operations
+- **Idempotent Replay**: All INSERT/UPDATE operations use UPSERT for safe replay
+- **Multi-Connector Filtering**: Multiple connectors can read the same topic, each processing only matching tables
+- **Configurable Error Handling**: Fail, log, or skip corrupt events
+- **Auto DDL**: Optionally create tables and evolve schemas automatically
 
-- **A_ENTTYP Header Mapping**: Maps IBM Journal Entry Type codes to database operations
-- **Timezone Conversion**: Converts A_TIMSTAMP to ISO8601 with configurable timezone
-- **Corrupt Event Routing**: Invalid events are routed to a dedicated error table
-
-## Event Structure Overview
-Each Kafka event consists of three primary components. All components are delivered in JSON format or as Kafka Metadata Headers.
-
-| Component | Format | Requirement | Description |
-|-----------|--------|-------------|-----------------------------------|
-| Key       | JSON   | Required for DELETE | Contains the unique identifier/primary key columns. |
-| Value     | JSON   | Required for INSERT/UPDATE | Contains the full data payload (Full Row Image). |
-| Headers   | Metadata | Required for ALL | Contains CDC metadata (Journal Control Fields). |
-
-## Component Details
-### A. Kafka Key
-- **Purpose**: Identifies the specific row being modified.
-- **Constraint**: Must be a JSON object containing the primary key column(s).
-
-### B. Kafka Value
-- **Purpose**: Contains the actual data content of the record.
-- **Constraint**: For UPDATE events, the full record data must be provided (not just changed columns). Both INSERT and UPDATE trigger a `FULL_UPSERT` operation in the target.
-
-### C. Kafka Headers (IIDR Journal Fields)
-The following headers must be set via the Kafka Client (typically via IIDR KCOP configuration):
-| Header Key | Description | Requirements |
-|---|---|---|
-| TableName | Source table name | Must match sourceTableName in jobSettings.yaml (Case Sensitive). |
-| A_ENTTYP | IIDR Journal Entry Code | Determines the operation type (See Section 3). |
-| A_TIMSTAMP | Source change timestamp | Format: yyyy-MM-dd HH:mm:ss.SSSSSSSSSSSS. |
-
-## A_ENTTYP Operation Mapping
-
-| Target Operation | A_ENTTYP Codes | Description |
-|------------------|----------------|-------------|
-| INSERT | PT, RR, PX, UR | New record insertion |
-| UPDATE | UP, FI, FP | Record modification |
-| DELETE | DL, DR | Record deletion |
-
-## Event Examples
-### Example A: INSERT / UPDATE (Full Upsert)
-Note: Both use the same structure. A_ENTTYP distinguishes the intent. Value must be a full data set.
-```json
-{
-  "key": {
-    "TRANSACTION_ID": "T1001"
-  },
-  "value": {
-    "TRANSACTION_ID": "T1001",
-    "USER_NAME": "John Doe",
-    "TRANSACTION_DATE": "2026-01-15T14:00:00.111222",
-    "TRANSACTION_AMOUNT": 150.00,
-    "STATUS": "Pending"
-  },
-  "headers": {
-    "TableName": "DB2_TRANSACTIONS",
-    "A_ENTTYP": "PT",
-    "A_TIMSTAMP": "2026-01-15 11:17:14.000000000000"
-  }
-}
-```
-
-### Example B: DELETE
-Note: Value is null; Key and Headers are mandatory for identification.
-```json
-{
-  "key": {
-    "TRANSACTION_ID": "T1001"
-  },
-  "value": null,
-  "headers": {
-    "TableName": "DB2_TRANSACTIONS",
-    "A_ENTTYP": "DL",
-    "A_TIMSTAMP": "2026-01-15 11:17:14.000000000000"
-  }
-}
-```
-
-## Timezone Handling
-The A_TIMSTAMP field is not ISO8601 compliant. The ingestion job interprets this string based on the defaultTransformTimeZone defined in tableSettings.yaml.
-Example: If Config TZ is Asia/Taipei (+08:00), then 2026-01-15 11:17:14.000000 is processed as 2026-01-15T11:17:14.000000+08:00.
-
-## Error Handling
-Events will be moved to `streaming_corrupt_events` if:
-- `A_ENTTYP` is missing or contains an unrecognized code.
-- `TableName` does not match the configured mapping.
-- A `DELETE` event is received without a Kafka Key.
-- An `INSERT`/`UPDATE` event is received with a null Value.
-
-## Configuration Properties
-
-### JDBC Connection
-
-| Property | Description | Required | Default |
-|----------|-------------|----------|---------|
-| `connection.url` | JDBC connection URL | Yes | - |
-| `connection.user` | JDBC username | Yes | - |
-| `connection.password` | JDBC password | Yes | - |
-
-### Table Mapping
-
-| Property | Description | Required | Default |
-|----------|-------------|----------|---------|
-| `table.name.format` | Target table name format. Use `${TableName}` for header value, `${topic}` for topic name | No | `${TableName}` |
-| `corrupt.events.table` | Table name for corrupt/invalid events | No | `streaming_corrupt_events` |
-
-### Timezone
-
-| Property | Description | Required | Default |
-|----------|-------------|----------|---------|
-| `default.timezone` | Timezone for A_TIMSTAMP interpretation (e.g., `Asia/Taipei`, `+08:00`, `UTC`) | No | `UTC` |
-
-### Primary Key
-
-| Property | Description | Required | Default |
-|----------|-------------|----------|---------|
-| `pk.mode` | Primary key mode: `record_key`, `record_value`, or `none` | No | `record_key` |
-| `pk.fields` | Comma-separated list of primary key field names | No | - |
-
-### DDL
-
-| Property | Description | Required | Default |
-|----------|-------------|----------|---------|
-| `auto.create` | Automatically create target tables if they don't exist | No | `false` |
-| `auto.evolve` | Automatically add columns to existing tables | No | `false` |
-
-### Performance
-
-| Property | Description | Required | Default |
-|----------|-------------|----------|---------|
-| `batch.size` | Maximum number of records in a single JDBC batch | No | `3000` |
-| `max.retries` | Maximum number of retries on transient errors | No | `10` |
-| `retry.backoff.ms` | Backoff time in milliseconds between retries | No | `3000` |
-
-## Example Configuration
+## Quick Start
 
 ```json
 {
-    "name": "iidr_cdc_sink_connector",
+    "name": "iidr_sink",
     "config": {
         "connector.class": "com.example.kafka.connect.iidr.IidrCdcSinkConnector",
         "tasks.max": "1",
-        "topics": "iir.CDC.TRANSACTIONS",
-
+        "topics": "iidr.CDC.ORDERS",
         "connection.url": "jdbc:mariadb://localhost:3306/target_db",
         "connection.user": "root",
         "connection.password": "password",
-
         "table.name.format": "${TableName}",
-        "corrupt.events.table": "streaming_corrupt_events",
-        "default.timezone": "Asia/Taipei",
-
         "pk.mode": "record_key",
         "pk.fields": "ID",
         "auto.create": "true",
-
         "key.converter": "org.apache.kafka.connect.json.JsonConverter",
         "key.converter.schemas.enable": "false",
         "value.converter": "org.apache.kafka.connect.json.JsonConverter",
@@ -169,9 +34,112 @@ Events will be moved to `streaming_corrupt_events` if:
 }
 ```
 
-## Corrupt Events Table Schema
+## Event Structure
 
-The table schema:
+| Component | Format | Required | Description |
+|-----------|--------|----------|-------------|
+| Key | JSON | DELETE only | Primary key columns |
+| Value | JSON | INSERT/UPDATE | Full row image |
+| Headers | Metadata | Always | CDC metadata (TableName, A_ENTTYP, A_TIMSTAMP) |
+
+### Required Headers
+
+| Header | Description |
+|--------|-------------|
+| `TableName` | Source table name (case-sensitive) |
+| `A_ENTTYP` | IIDR Journal Entry Type code |
+| `A_TIMSTAMP` | Source timestamp (`yyyy-MM-dd HH:mm:ss.SSSSSS`) |
+
+### A_ENTTYP Operation Mapping
+
+| Operation | Codes | Description |
+|-----------|-------|-------------|
+| UPSERT | PT, RR, PX, UR | Insert (mapped to UPSERT) |
+| UPSERT | UP, FI, FP | Update (mapped to UPSERT) |
+| DELETE | DL, DR | Delete |
+
+## Configuration
+
+### Required
+
+| Property | Description |
+|----------|-------------|
+| `connection.url` | JDBC connection URL |
+| `connection.user` | Database username |
+| `connection.password` | Database password |
+
+### Table Mapping
+
+| Property | Default | Description |
+|----------|---------|-------------|
+| `table.name.format` | `${TableName}` | Target table. Supports `${TableName}` and `${topic}` placeholders |
+| `pk.mode` | `record_key` | PK source: `record_key`, `record_value`, `none` |
+| `pk.fields` | - | Comma-separated PK field names |
+
+### Error Handling
+
+| Property | Default | Description |
+|----------|---------|-------------|
+| `iidr.errors.tolerance` | `log` | `none` (fail), `log` (warn+skip), `all` (silent skip) |
+| `corrupt.events.table` | - | Table for corrupt events (empty=disabled) |
+
+### DDL & Performance
+
+| Property | Default | Description |
+|----------|---------|-------------|
+| `auto.create` | `false` | Auto-create tables |
+| `auto.evolve` | `false` | Auto-add columns |
+| `default.timezone` | `UTC` | Timezone for A_TIMSTAMP |
+| `batch.size` | `3000` | JDBC batch size |
+
+## Multi-Connector Table Filtering
+
+When `table.name.format` is a **literal value** (no `${TableName}`), the connector only processes records where the `TableName` header matches.
+
+| Format | Behavior |
+|--------|----------|
+| `${TableName}` | Process all records |
+| `ORDERS` | Only process records with `TableName=ORDERS` |
+| `PREFIX_${TableName}` | Process all, target = PREFIX_ + TableName |
+
+**Example**: Two connectors reading the same topic, each filtering different tables:
+
+```json
+// Connector 1: processes only ORDERS
+{ "table.name.format": "ORDERS", "topics": "iidr.CDC.ALL" }
+
+// Connector 2: processes only PRODUCTS
+{ "table.name.format": "PRODUCTS", "topics": "iidr.CDC.ALL" }
+```
+
+## Event Examples
+
+**INSERT/UPDATE** (A_ENTTYP: PT, UP, etc.):
+```json
+{
+  "key": { "ID": 1 },
+  "value": { "ID": 1, "NAME": "Order-001", "AMOUNT": 100.50 },
+  "headers": { "TableName": "ORDERS", "A_ENTTYP": "PT", "A_TIMSTAMP": "2026-01-15 10:00:00.000000" }
+}
+```
+
+**DELETE** (A_ENTTYP: DL, DR):
+```json
+{
+  "key": { "ID": 1 },
+  "value": null,
+  "headers": { "TableName": "ORDERS", "A_ENTTYP": "DL", "A_TIMSTAMP": "2026-01-15 10:00:00.000000" }
+}
+```
+
+## Corrupt Events
+
+Events are corrupt if:
+- Missing `TableName` or `A_ENTTYP` header
+- Unrecognized `A_ENTTYP` code
+- DELETE without key, or INSERT/UPDATE without value
+
+When `corrupt.events.table` is set, corrupt events are logged to:
 
 ```sql
 CREATE TABLE streaming_corrupt_events (
@@ -185,44 +153,25 @@ CREATE TABLE streaming_corrupt_events (
     error_reason VARCHAR(1000) NOT NULL,
     table_name VARCHAR(255),
     entry_type VARCHAR(10),
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    INDEX idx_topic_partition_offset (topic, kafka_partition, kafka_offset),
-    INDEX idx_table_name (table_name),
-    INDEX idx_created_at (created_at)
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 ```
 
-## Building
-
-The connector is built as part of the Kafka Connect Docker image:
+## Building & Testing
 
 ```bash
-cd deployment/kafka-connect/docker
-./build.sh
-```
-
-## Deployment
-
-Register the connector via Kafka Connect REST API:
-
-```bash
-curl -X POST http://localhost:8083/connectors \
-  -H "Content-Type: application/json" \
-  -d @hack/sink-jdbc/iidr_cdc_sink.json
-```
-
-Check connector status:
-
-```bash
-curl http://localhost:8083/connectors/iidr_cdc_sink_connector/status
+make build-v2    # Build with Debezium 2.x
+make build-v3    # Build with Debezium 3.x
+make iidr-all-v2 # Run E2E test with 2.x
+make iidr-all-v3 # Run E2E test with 3.x
 ```
 
 ## Compatibility
 
-- **Java**: 11 (Debezium 2.x) or 17 (Debezium 3.x)
-- **Kafka Connect**: Confluent Platform 7.6.1+ or 7.8.0+
-- **Target Databases**: MySQL, MariaDB, PostgreSQL, and other JDBC-compatible databases
+- **Java**: 11 (Debezium 2.x) / 17 (Debezium 3.x)
+- **Databases**: MySQL, MariaDB, PostgreSQL, SQL Server, Oracle
 
 ## References
-- [IBM Docs: IIDR Journal Codes](https://www.ibm.com/docs/en/idr/11.4?topic=tables-journal-control-field-header-format)
-- [IBM Docs: Adding Headers to Kafka Records](https://www.ibm.com/support/pages/node/6252611)
+
+- [IBM IIDR Journal Codes](https://www.ibm.com/docs/en/idr/11.4?topic=tables-journal-control-field-header-format)
+- [IBM Adding Headers to Kafka Records](https://www.ibm.com/support/pages/node/6252611)
