@@ -3,7 +3,7 @@
   "config": {
     "connector.class": "io.confluent.connect.jdbc.JdbcSinkConnector",
     "tasks.max": "1",
-    "topics": "oracle-sink.TESTUSER.CUSTOMERS",
+    "topics": "oracle.C__DBZUSER.BIG5_TEST",
     "connection.url": "jdbc:mariadb://mariadb:3306/testdb",
     "connection.user": "testuser",
     "connection.password": "testpwd",

@@ -51,20 +51,13 @@ EOF"
 
 Expected output: `ARCHIVELOG`
 
-## Step 3: Grant Oracle CDC Privileges
+## Step 3: Grant Quota to CDC User
+
+Most CDC privileges are already granted by the startup script. We only need to grant quota for the schema history table:
 
 ```bash
 docker compose exec oracle bash -c "sqlplus -S / as sysdba << 'EOF'
 ALTER USER c##dbzuser QUOTA UNLIMITED ON USERS;
-GRANT SELECT ON V_\$DATABASE TO c##dbzuser CONTAINER=ALL;
-GRANT SELECT ON V_\$LOG TO c##dbzuser CONTAINER=ALL;
-GRANT SELECT ON V_\$LOG_HISTORY TO c##dbzuser CONTAINER=ALL;
-GRANT SELECT ON V_\$LOGMNR_LOGS TO c##dbzuser CONTAINER=ALL;
-GRANT SELECT ON V_\$LOGMNR_CONTENTS TO c##dbzuser CONTAINER=ALL;
-GRANT SELECT ON V_\$LOGFILE TO c##dbzuser CONTAINER=ALL;
-GRANT SELECT ON V_\$ARCHIVED_LOG TO c##dbzuser CONTAINER=ALL;
-GRANT SELECT ON V_\$ARCHIVE_DEST_STATUS TO c##dbzuser CONTAINER=ALL;
-GRANT SELECT ON V_\$TRANSACTION TO c##dbzuser CONTAINER=ALL;
 EXIT;
 EOF"
 ```
@@ -74,39 +67,10 @@ EOF"
 Insert test data that simulates halfwidth-garbled Big-5 characters:
 
 ```bash
-docker compose exec oracle bash -c "sqlplus -S testuser/testpwd@//localhost:1521/FREEPDB1 << 'EOF'
-DELETE FROM customers;
-
--- Record 1: name=測試 address=台北市 description=測試中文
-INSERT INTO customers (id, name, address, description) VALUES (
-    1,
-    UNISTR('\FFB4\FFFA\FFB8\FFD5'),
-    UNISTR('\FFA5\0078\FFA5\005F\FFA5\FFAB'),
-    UNISTR('\FFB4\FFFA\FFB8\FFD5\FFA4\FFA4\FFA4\FFE5')
-);
-
--- Record 2: name=你好 address=世界 description=你好世界
-INSERT INTO customers (id, name, address, description) VALUES (
-    2,
-    UNISTR('\FFA7\0041\FFA6\006E'),
-    UNISTR('\FFA5\0040\FFAC\FFC9'),
-    UNISTR('\FFA7\0041\FFA6\006E\FFA5\0040\FFAC\FFC9')
-);
-
--- Record 3: Mixed ASCII and Big-5
-INSERT INTO customers (id, name, address, description) VALUES (
-    3,
-    'Customer-' || UNISTR('\FFA5\0078\FFA5\005F'),
-    UNISTR('\FFA5\0078\FFA5\005F\FFA5\FFAB') || '-District',
-    'Mixed content with ' || UNISTR('\FFA4\FFA4\FFA4\FFE5')
-);
-
-COMMIT;
-SELECT id, name, address FROM customers;
-EOF"
+docker compose exec oracle /container-entrypoint-startdb.d/insert_big5_data.sh
 ```
 
-The data will display as garbled halfwidth characters (e.g., `ﾴ￺ﾸￕ`).
+The script inserts 3 records and displays the character mappings. The data will show as garbled halfwidth characters (e.g., `ﾴ￺ﾸￕ`).
 
 ## Step 5: Deploy Oracle Source Connector (with SMT)
 
@@ -121,7 +85,7 @@ Check connector status:
 
 ```bash
 docker compose exec kafka-connect curl -s \
-  http://localhost:8083/connectors/oracle-smt-sink/status | jq '.tasks[0].state'
+  http://localhost:8083/connectors/oracle-source-smt/status | jq '.tasks[0].state'
 ```
 
 Expected: `"RUNNING"`
@@ -133,7 +97,7 @@ Check that the SMT decoded the Big-5 characters:
 ```bash
 docker compose exec kafka /opt/kafka/bin/kafka-console-consumer.sh \
   --bootstrap-server localhost:9092 \
-  --topic oracle-sink.TESTUSER.CUSTOMERS \
+  --topic oracle.TESTUSER.CUSTOMERS \
   --from-beginning \
   --timeout-ms 10000 2>/dev/null | jq '.payload.after'
 ```

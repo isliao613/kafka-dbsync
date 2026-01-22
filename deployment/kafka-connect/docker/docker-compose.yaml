@@ -9,26 +9,29 @@ services:
         set -xe
         chown -R 54321:54321 /opt/oracle/oradata
     volumes:
-      - oracle-oradata:/opt/oracle/oradata
+      - ./oradata:/opt/oracle/oradata
     restart: "no"
 
-  # Oracle Free database
+  # Oracle Express database for charset testing
+  # IMPORTANT: Mount host folder (./oradata) instead of Docker volume to trigger fresh DB creation
+  # which respects ORACLE_CHARACTERSET env var
   oracle:
-    image: gvenzl/oracle-free:23.6-slim-faststart
+    # retag of container-registry.oracle.com/database/express:21.3.0-xe
+    image: rophy/oracle-database:21.3.0-xe
     depends_on:
       init:
         condition: service_completed_successfully
     environment:
-      - ORACLE_PASSWORD=OraclePwd123
-      # Note: Oracle Free uses AL32UTF8 and doesn't support changing charset.
-      # Test data uses UNISTR() to simulate halfwidth-garbled Big-5 from US7ASCII databases.
+      - ORACLE_PWD=OraclePwd123
+      - ORACLE_CHARACTERSET=US7ASCII
+      - ENABLE_ARCHIVELOG=true
     ports:
       - "1521:1521"
     volumes:
-      - oracle-oradata:/opt/oracle/oradata
-      - ./scripts:/container-entrypoint-startdb.d:ro
+      - ./oradata:/opt/oracle/oradata
+      - ./scripts:/opt/oracle/scripts/startup:ro
     healthcheck:
-      test: ["CMD-SHELL", "echo 'SELECT 1 FROM DUAL;' | sqlplus -S c##dbzuser/dbzpwd@//localhost:1521/FREE || exit 1"]
+      test: ["CMD-SHELL", "echo 'SELECT 1 FROM DUAL;' | sqlplus -S system/OraclePwd123@//localhost:1521/XEPDB1 || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 20
