@@ -220,11 +220,8 @@ public class LegacyCharsetTransform<R extends ConnectRecord<R>> implements Trans
             int cp = garbled.codePointAt(i);
 
             if (cp >= 0xFF00 && cp <= 0xFFFF) {
-                // Halfwidth range (0xFF00-0xFFFF) - recover original byte
+                // Halfwidth range - recover original byte
                 recovered[byteIndex++] = (byte) (cp - 0xFF00);
-            } else if (cp >= 0xEF00 && cp <= 0xEFFF) {
-                // Private Use Area variant (0xEF00-0xEFFF) - some JDBC drivers use this range
-                recovered[byteIndex++] = (byte) (cp - 0xEF00);
             } else if (cp < 0x80) {
                 // ASCII - keep as is
                 recovered[byteIndex++] = (byte) cp;

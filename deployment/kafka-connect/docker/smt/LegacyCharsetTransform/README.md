@@ -138,21 +138,11 @@ volumes:
 
 ## How It Works
 
-1. Oracle JDBC converts high bytes (>=0x80) to Unicode ranges (see below)
+1. Oracle JDBC converts high bytes (>=0x80) to Unicode halfwidth range (0xFFxx)
 2. The SMT intercepts specified columns in matching tables
-3. Recovers original bytes from Unicode codepoints
+3. Recovers original bytes: `byte = codepoint - 0xFF00` for codepoints >= 0xFF00
 4. Decodes recovered bytes using the specified source encoding
 5. Outputs Unicode (UTF-8) strings for downstream consumers
-
-### Supported Unicode Ranges
-
-Different Oracle JDBC drivers/configurations may use different Unicode ranges:
-
-| Unicode Range | Byte Recovery Formula | Notes |
-|---------------|----------------------|-------|
-| U+FF00-U+FFFF | `byte = codepoint - 0xFF00` | Halfwidth and Fullwidth Forms block |
-| U+EF00-U+EFFF | `byte = codepoint - 0xEF00` | Private Use Area variant |
-| U+0000-U+007F | `byte = codepoint` | ASCII passthrough |
 
 ### Example Transformation
 
