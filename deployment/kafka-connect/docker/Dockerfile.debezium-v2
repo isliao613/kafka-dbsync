@@ -51,7 +51,7 @@ RUN wget https://dlm.mariadb.com/2720710/Connectors/java/connector-java-3.1.2/ma
 ## clickhouse
 RUN wget https://github.com/ClickHouse/clickhouse-java/releases/download/v0.4.6/clickhouse-jdbc-0.4.6.jar -P /usr/share/confluent-hub-components/confluentinc-kafka-connect-jdbc/lib/
 ## sqlserver
-RUN wget https://download.microsoft.com/download/9/e/9/9e97cef4-4c64-484c-bd1b-192147912c47/enu/sqljdbc_12.6.1.0_enu.tar.gz
+RUN wget --no-check-certificate https://download.microsoft.com/download/9/e/9/9e97cef4-4c64-484c-bd1b-192147912c47/enu/sqljdbc_12.6.1.0_enu.tar.gz
 RUN tar zxvf sqljdbc_12.6.1.0_enu.tar.gz -C /usr/share/confluent-hub-components/confluentinc-kafka-connect-jdbc/lib
 RUN mv /usr/share/confluent-hub-components/confluentinc-kafka-connect-jdbc/lib/sqljdbc_12.6/enu/jars/* /usr/share/confluent-hub-components/confluentinc-kafka-connect-jdbc/lib/
 

@@ -1,0 +1,27 @@
+{
+  "name": "oracle-source-smt",
+  "config": {
+    "connector.class": "io.debezium.connector.oracle.OracleConnector",
+    "tasks.max": "1",
+    "database.hostname": "oracle",
+    "database.port": "1521",
+    "database.user": "c##dbzuser",
+    "database.password": "dbzpwd",
+    "database.dbname": "FREE",
+    "database.pdb.name": "FREEPDB1",
+    "topic.prefix": "oracle-smt",
+    "schema.include.list": "TESTUSER",
+    "table.include.list": "TESTUSER.CUSTOMERS",
+    "database.history.kafka.bootstrap.servers": "kafka:9092",
+    "database.history.kafka.topic": "schema-changes.oracle-smt",
+    "schema.history.internal.kafka.bootstrap.servers": "kafka:9092",
+    "schema.history.internal.kafka.topic": "schema-changes.oracle-smt",
+    "log.mining.strategy": "online_catalog",
+    "decimal.handling.mode": "string",
+    "snapshot.mode": "initial",
+    "transforms": "legacycharset",
+    "transforms.legacycharset.type": "com.example.debezium.smt.LegacyCharsetTransform",
+    "transforms.legacycharset.encoding": "BIG5",
+    "transforms.legacycharset.columns": "NAME,ADDRESS,DESCRIPTION"
+  }
+}
