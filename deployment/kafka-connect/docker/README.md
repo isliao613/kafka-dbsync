@@ -7,7 +7,43 @@ This guide walks through testing the LegacyCharsetTransform SMT with the Oracle 
 - Docker and Docker Compose
 - At least 8GB of available RAM (Oracle requires 4GB)
 
-## Quick Start
+## Automated E2E Tests
+
+Run the complete test suite:
+
+```bash
+cd deployment/kafka-connect/docker
+
+# Start all services
+docker compose up -d
+
+# Wait for services to be healthy (Oracle takes ~3 minutes)
+docker compose ps
+
+# Run e2e tests
+./tests/big5-tests.sh
+```
+
+The test suite:
+- Creates the `big5_test` table
+- Inserts test data with various Big-5 characters (CJK, Bopomofo, punctuation, full-width)
+- Deploys Oracle source connector with SMT enabled
+- Verifies data in Kafka shows properly decoded UTF-8
+- Tests without SMT to confirm halfwidth character output
+- Cleans up all resources
+
+Individual test commands:
+```bash
+./tests/big5-tests.sh setup      # Create table and insert data only
+./tests/big5-tests.sh cleanup    # Clean up connectors, topics, and table
+./tests/big5-tests.sh test-smt   # Test SMT transformation only
+```
+
+## Manual Testing
+
+For step-by-step manual testing and debugging, follow the steps below.
+
+### Step 1: Start Services
 
 ```bash
 cd deployment/kafka-connect/docker
@@ -18,8 +54,6 @@ docker compose up -d
 # Wait for services to be healthy (Oracle takes ~3 minutes)
 docker compose ps
 ```
-
-## Step 1: Wait for Services
 
 Oracle takes the longest to start. Wait until all services show "healthy":
 
@@ -34,7 +68,7 @@ docker compose ps
 # docker-oracle-1           ... (healthy)
 ```
 
-## Step 2: Enable Oracle ARCHIVELOG Mode
+### Step 2: Enable Oracle ARCHIVELOG Mode
 
 Oracle Free doesn't enable ARCHIVELOG by default. Enable it for CDC:
 
@@ -51,7 +85,7 @@ EOF"
 
 Expected output: `ARCHIVELOG`
 
-## Step 3: Grant Quota to CDC User
+### Step 3: Grant Quota to CDC User
 
 Most CDC privileges are already granted by the startup script. We only need to grant quota for the schema history table:
 
@@ -62,17 +96,56 @@ EXIT;
 EOF"
 ```
 
-## Step 4: Insert Big-5 Test Data
+### Step 4: Create Table and Insert Big-5 Test Data
 
-Insert test data that simulates halfwidth-garbled Big-5 characters:
+Create the test table and insert data that simulates Big-5 bytes in Oracle US7ASCII:
 
 ```bash
-docker compose exec oracle /container-entrypoint-startdb.d/insert_big5_data.sh
+docker compose exec oracle bash -c "sqlplus -S c##dbzuser/dbz@//localhost:1521/XEPDB1 << 'EOF'
+-- Create test table
+CREATE TABLE big5_test (
+    id NUMBER PRIMARY KEY,
+    name VARCHAR2(100),
+    address VARCHAR2(200),
+    description VARCHAR2(500)
+);
+ALTER TABLE big5_test ADD SUPPLEMENTAL LOG DATA (ALL) COLUMNS;
+
+-- Insert using CHR() with raw Big-5 byte values
+-- 測試 = CHR(180)||CHR(250)||CHR(184)||CHR(213)
+-- 台北市 = CHR(165)||CHR(120)||CHR(165)||CHR(95)||CHR(165)||CHR(171)
+INSERT INTO big5_test (id, name, address, description) VALUES (
+    1,
+    CHR(180)||CHR(250)||CHR(184)||CHR(213),
+    CHR(165)||CHR(120)||CHR(165)||CHR(95)||CHR(165)||CHR(171),
+    CHR(180)||CHR(250)||CHR(184)||CHR(213)||CHR(164)||CHR(164)||CHR(164)||CHR(229)
+);
+
+-- Insert using CONVERT() function
+INSERT INTO big5_test (id, name, address, description) VALUES (
+    2,
+    CONVERT('你好', 'ZHT16MSWIN950', 'AL32UTF8'),
+    CONVERT('世界', 'ZHT16MSWIN950', 'AL32UTF8'),
+    CONVERT('你好世界', 'ZHT16MSWIN950', 'AL32UTF8')
+);
+
+-- Mixed ASCII and Big-5
+INSERT INTO big5_test (id, name, address, description) VALUES (
+    3,
+    'Customer-' || CHR(165)||CHR(120)||CHR(165)||CHR(95),
+    CONVERT('台北市', 'ZHT16MSWIN950', 'AL32UTF8') || '-District',
+    'Mixed content with ' || CHR(164)||CHR(164)||CHR(164)||CHR(229)
+);
+
+COMMIT;
+SELECT COUNT(*) AS records FROM big5_test;
+EXIT;
+EOF"
 ```
 
-The script inserts 3 records and displays the character mappings. The data will show as garbled halfwidth characters (e.g., `ﾴ￺ﾸￕ`).
+The data will show as garbled halfwidth characters (e.g., `ﾴ￺ﾸￕ`) when read via JDBC.
 
-## Step 5: Deploy Oracle Source Connector (with SMT)
+### Step 5: Deploy Oracle Source Connector (with SMT)
 
 ```bash
 docker compose exec kafka-connect curl -sf -X POST \
@@ -90,7 +163,7 @@ docker compose exec kafka-connect curl -s \
 
 Expected: `"RUNNING"`
 
-## Step 6: Verify SMT Transformation in Kafka
+### Step 6: Verify SMT Transformation in Kafka
 
 Check that the SMT decoded the Big-5 characters:
 
@@ -110,7 +183,7 @@ Expected output (properly decoded UTF-8):
 {"ID": "3", "NAME": "Customer-台北", "ADDRESS": "台北市-District", "DESCRIPTION": "Mixed content with 中文"}
 ```
 
-## Step 7: Deploy MariaDB Sink Connector
+### Step 7: Deploy MariaDB Sink Connector
 
 ```bash
 docker compose exec kafka-connect curl -sf -X POST \
@@ -128,7 +201,7 @@ docker compose exec kafka-connect curl -s \
 
 Expected: `"RUNNING"`
 
-## Step 8: Verify Data in MariaDB
+### Step 8: Verify Data in MariaDB
 
 ```bash
 docker compose exec mariadb mariadb -u testuser -ptestpwd testdb \
@@ -147,7 +220,7 @@ Expected output:
 +----+----------------+---------------------+---------------------------+
 ```
 
-## Step 9: Test CDC (Insert New Record)
+### Step 9: Test CDC (Insert New Record)
 
 Insert a new record to test real-time CDC:
 
@@ -173,7 +246,7 @@ docker compose exec kafka /opt/kafka/bin/kafka-console-consumer.sh \
   --timeout-ms 10000 2>/dev/null | grep '"ID":"4"' | jq '.payload.after'
 ```
 
-## Cleanup
+### Cleanup
 
 ```bash
 # Stop all services

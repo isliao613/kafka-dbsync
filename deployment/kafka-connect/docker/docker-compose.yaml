@@ -76,7 +76,7 @@ services:
   kafka-connect:
     build:
       context: .
-      dockerfile: Dockerfile
+      dockerfile: Dockerfile.debezium-v3
     depends_on:
       kafka:
         condition: service_healthy
