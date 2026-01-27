@@ -32,11 +32,20 @@ The test suite:
 - Tests without SMT to confirm halfwidth character output
 - Cleans up all resources
 
-Individual test commands:
+Available test commands:
 ```bash
+./tests/big5-tests.sh --help     # Show all available commands
+
+# Regular test suite
+./tests/big5-tests.sh            # Run complete test suite (default)
 ./tests/big5-tests.sh setup      # Create table and insert data only
 ./tests/big5-tests.sh cleanup    # Clean up connectors, topics, and table
-./tests/big5-tests.sh test-smt   # Test SMT transformation only
+./tests/big5-tests.sh test-smt             # Test SMT with columns specified
+./tests/big5-tests.sh test-smt-all-columns # Test SMT without columns config
+./tests/big5-tests.sh test-no-smt          # Test without SMT (baseline)
+
+# Proof-of-concept (not in regular suite, requires restart)
+./tests/big5-tests.sh test-nls-lang  # Prove NLS_LANG doesn't help
 ```
 
 ## Manual Testing
