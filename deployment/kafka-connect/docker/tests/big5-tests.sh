@@ -603,19 +603,24 @@ case "${1:-all}" in
     all)
         run_all_tests
         ;;
-    *)
-        echo "Usage: $0 [setup|cleanup|test-smt|test-smt-all-columns|test-no-smt|test-nls-lang|all]"
+    help|--help|-h|*)
+        echo "Usage: $0 <command>"
         echo ""
         echo "Commands:"
+        echo "  all                  - Run complete test suite (default)"
         echo "  setup                - Create table and insert test data"
         echo "  cleanup              - Remove connectors, topics, and table"
         echo "  test-smt             - Test SMT transformation with columns specified"
         echo "  test-smt-all-columns - Test SMT transformation without columns (all columns)"
         echo "  test-no-smt          - Test without SMT only"
-        echo "  all                  - Run complete test suite (default)"
         echo ""
         echo "Proof-of-concept (not in regular suite):"
         echo "  test-nls-lang        - Prove NLS_LANG=ZHT16BIG5 doesn't help (requires restart)"
-        exit 1
+        echo ""
+        echo "Examples:"
+        echo "  $0                   # Run all tests"
+        echo "  $0 test-smt          # Run just the SMT test"
+        echo "  $0 --help            # Show this help"
+        [[ "${1:-}" == "help" || "${1:-}" == "--help" || "${1:-}" == "-h" ]] && exit 0 || exit 1
         ;;
 esac
