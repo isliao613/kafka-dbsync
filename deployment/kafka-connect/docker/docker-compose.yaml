@@ -83,6 +83,7 @@ services:
       oracle:
         condition: service_healthy
     environment:
+      - NLS_LANG=${NLS_LANG:-}
       - CONNECT_BOOTSTRAP_SERVERS=kafka:9092
       - CONNECT_REST_PORT=8083
       - CONNECT_GROUP_ID=kafka-connect-group

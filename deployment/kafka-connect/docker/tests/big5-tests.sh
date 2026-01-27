@@ -426,6 +426,97 @@ test_without_smt_shows_halfwidth() {
     assert_not_contains "$messages" "測試" "Without SMT does not decode properly"
 }
 
+restart_kafka_connect_with_nls_lang() {
+    local nls_lang=$1
+    log_info "Restarting Kafka Connect with NLS_LANG=$nls_lang..."
+
+    # Stop kafka-connect
+    docker compose stop kafka-connect > /dev/null 2>&1
+
+    # Start with NLS_LANG environment variable
+    NLS_LANG="$nls_lang" docker compose up -d kafka-connect > /dev/null 2>&1
+
+    # Wait for healthy
+    local max_attempts=60
+    local attempt=0
+    until docker compose ps kafka-connect --format "{{.Health}}" 2>/dev/null | grep -q "healthy"; do
+        attempt=$((attempt + 1))
+        if [ $attempt -ge $max_attempts ]; then
+            log_error "Kafka Connect not healthy after $max_attempts attempts"
+            return 1
+        fi
+        sleep 5
+    done
+
+    log_info "Kafka Connect is ready with NLS_LANG=$nls_lang"
+}
+
+restart_kafka_connect_default() {
+    log_info "Restarting Kafka Connect with default settings..."
+
+    # Stop kafka-connect
+    docker compose stop kafka-connect > /dev/null 2>&1
+
+    # Start without NLS_LANG (unset it)
+    unset NLS_LANG
+    docker compose up -d kafka-connect > /dev/null 2>&1
+
+    # Wait for healthy
+    local max_attempts=60
+    local attempt=0
+    until docker compose ps kafka-connect --format "{{.Health}}" 2>/dev/null | grep -q "healthy"; do
+        attempt=$((attempt + 1))
+        if [ $attempt -ge $max_attempts ]; then
+            log_error "Kafka Connect not healthy after $max_attempts attempts"
+            return 1
+        fi
+        sleep 5
+    done
+
+    log_info "Kafka Connect is ready with default settings"
+}
+
+# Proof-of-concept test: NOT part of regular regression suite.
+# Demonstrates that NLS_LANG alone cannot decode Big-5 from US7ASCII database.
+# Run manually with: ./tests/big5-tests.sh test-nls-lang
+test_nls_lang_without_smt() {
+    log_info "=== Test: NLS_LANG=ZHT16BIG5 does NOT help with US7ASCII database ==="
+
+    # Clean up any existing connectors
+    delete_connector "oracle-source-smt"
+    delete_connector "oracle-source-smt-all-columns"
+    delete_connector "oracle-source"
+    cleanup_topics
+
+    # Restart Kafka Connect with NLS_LANG set to Big-5
+    restart_kafka_connect_with_nls_lang "AMERICAN_AMERICA.ZHT16BIG5"
+
+    # Deploy connector without SMT
+    deploy_connector "connectors/oracle-source.json"
+
+    # Wait for data to be captured
+    log_info "Waiting for CDC to capture data..."
+    sleep 10
+
+    # Consume messages (we inserted 6 records)
+    local messages
+    messages=$(consume_messages "oracle.C__DBZUSER.BIG5_TEST" 6)
+
+    # NLS_LANG does NOT help when the database charset is US7ASCII.
+    # Oracle stores Big-5 bytes as individual ASCII characters (0x00-0xFF).
+    # Setting NLS_LANG on client side cannot reverse this - the data is already
+    # "corrupted" at the database level. This is why the SMT is necessary.
+    #
+    # Data should still show as halfwidth characters (same as without NLS_LANG)
+    assert_contains "$messages" "ﾴ" "NLS_LANG: Still shows halfwidth (NLS_LANG ineffective)"
+    assert_not_contains "$messages" "測試" "NLS_LANG: Does not decode properly (SMT required)"
+
+    # Restore Kafka Connect to default settings
+    delete_connector "oracle-source"
+    cleanup_topics
+    restart_kafka_connect_default
+}
+
 # ============================================================================
 # Main
 # ============================================================================
@@ -503,11 +594,17 @@ case "${1:-all}" in
         test_smt_all_columns
         print_summary
         ;;
+    test-nls-lang)
+        wait_for_oracle
+        wait_for_connect
+        test_nls_lang_without_smt
+        print_summary
+        ;;
     all)
         run_all_tests
         ;;
     *)
-        echo "Usage: $0 [setup|cleanup|test-smt|test-smt-all-columns|test-no-smt|all]"
+        echo "Usage: $0 [setup|cleanup|test-smt|test-smt-all-columns|test-no-smt|test-nls-lang|all]"
         echo ""
         echo "Commands:"
         echo "  setup                - Create table and insert test data"
@@ -516,6 +613,9 @@ case "${1:-all}" in
         echo "  test-smt-all-columns - Test SMT transformation without columns (all columns)"
         echo "  test-no-smt          - Test without SMT only"
         echo "  all                  - Run complete test suite (default)"
+        echo ""
+        echo "Proof-of-concept (not in regular suite):"
+        echo "  test-nls-lang        - Prove NLS_LANG=ZHT16BIG5 doesn't help (requires restart)"
         exit 1
         ;;
 esac
