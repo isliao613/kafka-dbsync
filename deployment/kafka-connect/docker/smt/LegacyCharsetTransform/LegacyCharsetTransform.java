@@ -7,6 +7,8 @@ import org.apache.kafka.connect.data.Schema;
 import org.apache.kafka.connect.data.SchemaBuilder;
 import org.apache.kafka.connect.data.Struct;
 import org.apache.kafka.connect.transforms.Transformation;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.nio.charset.Charset;
 import java.util.ArrayList;
@@ -36,6 +38,8 @@ import java.util.regex.Pattern;
  *           If empty, applies to all tables.
  */
 public class LegacyCharsetTransform<R extends ConnectRecord<R>> implements Transformation<R> {
+
+    private static final Logger log = LoggerFactory.getLogger(LegacyCharsetTransform.class);
 
     public static final String ENCODING_CONFIG = "encoding";
     public static final String COLUMNS_CONFIG = "columns";
@@ -91,9 +95,8 @@ public class LegacyCharsetTransform<R extends ConnectRecord<R>> implements Trans
             }
         }
 
-        System.out.println("[LegacyCharsetTransform] Configured: encoding=" + sourceEncoding +
-                ", columns=" + columns +
-                ", tables=" + (tablePatterns.isEmpty() ? "(all)" : tablePatterns));
+        log.info("Configured: encoding={}, columns={}, tables={}",
+                sourceEncoding, columns, (tablePatterns.isEmpty() ? "(all)" : tablePatterns));
     }
 
     /**
@@ -191,8 +194,7 @@ public class LegacyCharsetTransform<R extends ConnectRecord<R>> implements Trans
                 newStruct.put(field, decoded);
                 if (!decoded.equals(fieldValue)) {
                     modified = true;
-                    System.out.println("[LegacyCharsetTransform] Decoded " + field.name() +
-                            ": '" + fieldValue + "' -> '" + decoded + "'");
+                    log.debug("Decoded field {}: '{}' -> '{}'", field.name(), fieldValue, decoded);
                 }
             } else {
                 newStruct.put(field, fieldValue);
@@ -236,7 +238,7 @@ public class LegacyCharsetTransform<R extends ConnectRecord<R>> implements Trans
         try {
             return new String(Arrays.copyOf(recovered, byteIndex), sourceEncoding);
         } catch (Exception e) {
-            System.err.println("[LegacyCharsetTransform] Failed to decode: " + e.getMessage());
+            log.warn("Failed to decode byte array for garbled string '{}'", garbled, e);
             return garbled;
         }
     }

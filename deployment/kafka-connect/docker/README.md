@@ -287,6 +287,36 @@ docker compose logs kafka-connect --tail 100
 docker compose logs kafka-connect 2>&1 | grep LegacyCharsetTransform
 ```
 
+### Configure SMT Log Level
+
+The SMT log level is configured via the `CONNECT_LOG4J_LOGGERS` environment variable in `docker-compose.yaml`:
+
+```yaml
+environment:
+  # Default is INFO; change to DEBUG to see field transformations
+  - CONNECT_LOG4J_LOGGERS=com.example.debezium.smt.LegacyCharsetTransform=INFO
+```
+
+Available log levels (from least to most verbose):
+- `ERROR` - Only errors
+- `WARN` - Warnings and errors
+- `INFO` - Informational messages (logs configuration on startup)
+- `DEBUG` - Debug messages (logs each field transformation)
+- `TRACE` - Most verbose
+
+After changing the log level, restart kafka-connect:
+
+```bash
+docker compose up -d --force-recreate kafka-connect
+```
+
+Example DEBUG output showing field transformations:
+
+```
+[2026-01-28 03:23:49,091] DEBUG Decoded field NAME: 'ﾴ￺ﾸￕ' -> '測試' (com.example.debezium.smt.LegacyCharsetTransform)
+[2026-01-28 03:23:49,091] DEBUG Decoded field ADDRESS: 'ﾥxﾥ_ﾥﾫ' -> '台北市' (com.example.debezium.smt.LegacyCharsetTransform)
+```
+
 ### List Kafka Topics
 
 ```bash
