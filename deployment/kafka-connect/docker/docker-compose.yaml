@@ -99,6 +99,8 @@ services:
       - CONNECT_VALUE_CONVERTER_SCHEMAS_ENABLE=false
       - CONNECT_REST_ADVERTISED_HOST_NAME=kafka-connect
       - CONNECT_PLUGIN_PATH=/usr/share/java,/usr/share/confluent-hub-components
+      # SMT log level (change to DEBUG to see field transformations)
+      - CONNECT_LOG4J_LOGGERS=com.example.debezium.smt.LegacyCharsetTransform=INFO
     ports:
       - "8083:8083"
     volumes:
