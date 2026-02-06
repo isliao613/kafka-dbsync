@@ -19,8 +19,8 @@
         "pk.mode": "record_key",
         "pk.fields": "ID",
 
-        "auto.create": "true",
-        "auto.evolve": "true",
+        "auto.create": "false",
+        "auto.evolve": "false",
 
         "batch.size": "100",
         "max.retries": "3",

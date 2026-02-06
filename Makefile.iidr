@@ -99,12 +99,75 @@ setup-mariadb:
 		"CREATE DATABASE IF NOT EXISTS target_database DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
 	kubectl exec $(MARIADB_POD) -n $(NAMESPACE) -- mysql -h $(MARIADB_HOST) -u$(MARIADB_USER) -p$(MARIADB_PASS) -e \
 		"DROP TABLE IF EXISTS target_database.TEST_ORDERS_v2; DROP TABLE IF EXISTS target_database.TEST_ORDERS_v3; DROP TABLE IF EXISTS target_database.streaming_corrupt_events;"
+	@echo "[INFO] Creating MariaDB target tables..."
+	kubectl exec $(MARIADB_POD) -n $(NAMESPACE) -- mysql -h $(MARIADB_HOST) -u$(MARIADB_USER) -p$(MARIADB_PASS) -e \
+		"CREATE TABLE target_database.TEST_ORDERS_v2 ( \
+		  ID BIGINT PRIMARY KEY, \
+		  ORDER_NAME VARCHAR(255), \
+		  AMOUNT DOUBLE, \
+		  STATUS VARCHAR(255), \
+		  CREATED_AT DATETIME, \
+		  UPDATED_AT TIMESTAMP NULL, \
+		  ORDER_DATE DATE, \
+		  ORDER_TIME TIME \
+		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;"
+	kubectl exec $(MARIADB_POD) -n $(NAMESPACE) -- mysql -h $(MARIADB_HOST) -u$(MARIADB_USER) -p$(MARIADB_PASS) -e \
+		"CREATE TABLE target_database.TEST_ORDERS_v3 ( \
+		  ID BIGINT PRIMARY KEY, \
+		  ORDER_NAME VARCHAR(255), \
+		  AMOUNT DOUBLE, \
+		  STATUS VARCHAR(255), \
+		  CREATED_AT DATETIME, \
+		  UPDATED_AT TIMESTAMP NULL, \
+		  ORDER_DATE DATE, \
+		  ORDER_TIME TIME \
+		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;"
+	kubectl exec $(MARIADB_POD) -n $(NAMESPACE) -- mysql -h $(MARIADB_HOST) -u$(MARIADB_USER) -p$(MARIADB_PASS) -e \
+		"CREATE TABLE target_database.streaming_corrupt_events ( \
+		  id BIGINT AUTO_INCREMENT PRIMARY KEY, \
+		  topic VARCHAR(255) NOT NULL, \
+		  kafka_partition INT NOT NULL, \
+		  kafka_offset BIGINT NOT NULL, \
+		  record_key TEXT, \
+		  record_value LONGTEXT, \
+		  headers TEXT, \
+		  error_reason VARCHAR(1000) NOT NULL, \
+		  table_name VARCHAR(255), \
+		  entry_type VARCHAR(10), \
+		  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, \
+		  INDEX idx_topic_partition_offset (topic, kafka_partition, kafka_offset), \
+		  INDEX idx_table_name (table_name), \
+		  INDEX idx_created_at (created_at) \
+		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;"
 	@echo "[OK] MariaDB setup completed"
 
 setup-postgres:
 	@echo "[INFO] Setting up PostgreSQL tables..."
 	kubectl exec $(POSTGRES_POD) -n $(NAMESPACE) -- env PGPASSWORD=$(POSTGRES_PASS) psql -U $(POSTGRES_USER) -d $(POSTGRES_DB) -c \
 		"DROP TABLE IF EXISTS test_orders_v2; DROP TABLE IF EXISTS test_orders_v3;"
+	@echo "[INFO] Creating PostgreSQL target tables..."
+	kubectl exec $(POSTGRES_POD) -n $(NAMESPACE) -- env PGPASSWORD=$(POSTGRES_PASS) psql -U $(POSTGRES_USER) -d $(POSTGRES_DB) -c \
+		"CREATE TABLE test_orders_v2 ( \
+		  id BIGINT PRIMARY KEY, \
+		  order_name VARCHAR(255), \
+		  amount DOUBLE PRECISION, \
+		  status VARCHAR(255), \
+		  created_at TIMESTAMP, \
+		  updated_at TIMESTAMPTZ, \
+		  order_date DATE, \
+		  order_time TIME \
+		);"
+	kubectl exec $(POSTGRES_POD) -n $(NAMESPACE) -- env PGPASSWORD=$(POSTGRES_PASS) psql -U $(POSTGRES_USER) -d $(POSTGRES_DB) -c \
+		"CREATE TABLE test_orders_v3 ( \
+		  id BIGINT PRIMARY KEY, \
+		  order_name VARCHAR(255), \
+		  amount DOUBLE PRECISION, \
+		  status VARCHAR(255), \
+		  created_at TIMESTAMP, \
+		  updated_at TIMESTAMPTZ, \
+		  order_date DATE, \
+		  order_time TIME \
+		);"
 	@echo "[OK] PostgreSQL setup completed"
 
 # =============================================================================
@@ -114,24 +177,38 @@ setup-postgres:
 register-v2:
 	@echo "[INFO] Registering IIDR CDC sink connector (MariaDB) on Debezium 2.x..."
 	kubectl cp hack/sink-jdbc/iidr_cdc_sink-test-2x.json $(CURL_POD):/tmp/iidr_cdc_sink-test-2x.json -n $(NAMESPACE)
-	kubectl exec $(CURL_POD) -n $(NAMESPACE) -- curl -sf --max-time 10 -X POST \
-		http://$(KAFKA_CONNECT_2X_SVC):8083/connectors \
-		-H "Content-Type: application/json" \
-		-d @/tmp/iidr_cdc_sink-test-2x.json || echo "[ERROR] Failed to register IIDR sink connector"
-	@echo "[INFO] Waiting 5s for connector to start..."
-	@sleep 5
-	@echo "[OK] IIDR CDC sink connector (MariaDB) registered on 2.x"
+	@kubectl exec $(CURL_POD) -n $(NAMESPACE) -- sh -c '\
+		if curl -sf -o /dev/null --max-time 10 \
+			http://$(KAFKA_CONNECT_2X_SVC):8083/connectors/$(IIDR_CONNECTOR_MARIADB_2X) 2>/dev/null; then \
+			echo "[SKIP] Connector $(IIDR_CONNECTOR_MARIADB_2X) already exists."; \
+		else \
+			curl -sf --max-time 10 -X POST \
+				http://$(KAFKA_CONNECT_2X_SVC):8083/connectors \
+				-H "Content-Type: application/json" \
+				-d @/tmp/iidr_cdc_sink-test-2x.json || { echo "[ERROR] Failed to register connector"; exit 1; }; \
+			echo; \
+			echo "[OK] IIDR CDC sink connector (MariaDB) registered on 2.x"; \
+			echo "[INFO] Waiting 5s for connector to start..."; \
+			sleep 5; \
+		fi'
 
 register-v3:
 	@echo "[INFO] Registering IIDR CDC sink connector (MariaDB) on Debezium 3.x..."
 	kubectl cp hack/sink-jdbc/iidr_cdc_sink-test-3x.json $(CURL_POD):/tmp/iidr_cdc_sink-test-3x.json -n $(NAMESPACE)
-	kubectl exec $(CURL_POD) -n $(NAMESPACE) -- curl -sf --max-time 10 -X POST \
-		http://$(KAFKA_CONNECT_3X_SVC):8083/connectors \
-		-H "Content-Type: application/json" \
-		-d @/tmp/iidr_cdc_sink-test-3x.json || echo "[ERROR] Failed to register IIDR sink connector"
-	@echo "[INFO] Waiting 5s for connector to start..."
-	@sleep 5
-	@echo "[OK] IIDR CDC sink connector (MariaDB) registered on 3.x"
+	@kubectl exec $(CURL_POD) -n $(NAMESPACE) -- sh -c '\
+		if curl -sf -o /dev/null --max-time 10 \
+			http://$(KAFKA_CONNECT_3X_SVC):8083/connectors/$(IIDR_CONNECTOR_MARIADB_3X) 2>/dev/null; then \
+			echo "[SKIP] Connector $(IIDR_CONNECTOR_MARIADB_3X) already exists."; \
+		else \
+			curl -sf --max-time 10 -X POST \
+				http://$(KAFKA_CONNECT_3X_SVC):8083/connectors \
+				-H "Content-Type: application/json" \
+				-d @/tmp/iidr_cdc_sink-test-3x.json || { echo "[ERROR] Failed to register connector"; exit 1; }; \
+			echo; \
+			echo "[OK] IIDR CDC sink connector (MariaDB) registered on 3.x"; \
+			echo "[INFO] Waiting 5s for connector to start..."; \
+			sleep 5; \
+		fi'
 
 # =============================================================================
 # Connector Registration (PostgreSQL)
@@ -140,24 +217,38 @@ register-v3:
 register-pg-v2:
 	@echo "[INFO] Registering IIDR CDC sink connector (PostgreSQL) on Debezium 2.x..."
 	kubectl cp hack/sink-jdbc/iidr_cdc_sink-pg-test-2x.json $(CURL_POD):/tmp/iidr_cdc_sink-pg-test-2x.json -n $(NAMESPACE)
-	kubectl exec $(CURL_POD) -n $(NAMESPACE) -- curl -sf --max-time 10 -X POST \
-		http://$(KAFKA_CONNECT_2X_SVC):8083/connectors \
-		-H "Content-Type: application/json" \
-		-d @/tmp/iidr_cdc_sink-pg-test-2x.json || echo "[ERROR] Failed to register IIDR PostgreSQL sink connector"
-	@echo "[INFO] Waiting 5s for connector to start..."
-	@sleep 5
-	@echo "[OK] IIDR CDC sink connector (PostgreSQL) registered on 2.x"
+	@kubectl exec $(CURL_POD) -n $(NAMESPACE) -- sh -c '\
+		if curl -sf -o /dev/null --max-time 10 \
+			http://$(KAFKA_CONNECT_2X_SVC):8083/connectors/$(IIDR_CONNECTOR_PG_2X) 2>/dev/null; then \
+			echo "[SKIP] Connector $(IIDR_CONNECTOR_PG_2X) already exists."; \
+		else \
+			curl -sf --max-time 10 -X POST \
+				http://$(KAFKA_CONNECT_2X_SVC):8083/connectors \
+				-H "Content-Type: application/json" \
+				-d @/tmp/iidr_cdc_sink-pg-test-2x.json || { echo "[ERROR] Failed to register connector"; exit 1; }; \
+			echo; \
+			echo "[OK] IIDR CDC sink connector (PostgreSQL) registered on 2.x"; \
+			echo "[INFO] Waiting 5s for connector to start..."; \
+			sleep 5; \
+		fi'
 
 register-pg-v3:
 	@echo "[INFO] Registering IIDR CDC sink connector (PostgreSQL) on Debezium 3.x..."
 	kubectl cp hack/sink-jdbc/iidr_cdc_sink-pg-test-3x.json $(CURL_POD):/tmp/iidr_cdc_sink-pg-test-3x.json -n $(NAMESPACE)
-	kubectl exec $(CURL_POD) -n $(NAMESPACE) -- curl -sf --max-time 10 -X POST \
-		http://$(KAFKA_CONNECT_3X_SVC):8083/connectors \
-		-H "Content-Type: application/json" \
-		-d @/tmp/iidr_cdc_sink-pg-test-3x.json || echo "[ERROR] Failed to register IIDR PostgreSQL sink connector"
-	@echo "[INFO] Waiting 5s for connector to start..."
-	@sleep 5
-	@echo "[OK] IIDR CDC sink connector (PostgreSQL) registered on 3.x"
+	@kubectl exec $(CURL_POD) -n $(NAMESPACE) -- sh -c '\
+		if curl -sf -o /dev/null --max-time 10 \
+			http://$(KAFKA_CONNECT_3X_SVC):8083/connectors/$(IIDR_CONNECTOR_PG_3X) 2>/dev/null; then \
+			echo "[SKIP] Connector $(IIDR_CONNECTOR_PG_3X) already exists."; \
+		else \
+			curl -sf --max-time 10 -X POST \
+				http://$(KAFKA_CONNECT_3X_SVC):8083/connectors \
+				-H "Content-Type: application/json" \
+				-d @/tmp/iidr_cdc_sink-pg-test-3x.json || { echo "[ERROR] Failed to register connector"; exit 1; }; \
+			echo; \
+			echo "[OK] IIDR CDC sink connector (PostgreSQL) registered on 3.x"; \
+			echo "[INFO] Waiting 5s for connector to start..."; \
+			sleep 5; \
+		fi'
 
 # =============================================================================
 # Testing

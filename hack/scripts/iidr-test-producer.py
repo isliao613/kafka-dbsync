@@ -59,7 +59,7 @@ def produce_iidr_events(bootstrap_server, topic):
         # INSERT events (A_ENTTYP = PT)
         {
             "key": {"ID": 1},
-            "value": {"ID": 1, "ORDER_NAME": "Order-001", "AMOUNT": 100.50, "STATUS": "NEW", "CREATED_AT": "2026-01-15T10:00:00"},
+            "value": {"ID": 1, "ORDER_NAME": "Order-001", "AMOUNT": 100.50, "STATUS": "NEW", "CREATED_AT": "2026-01-15T10:00:00", "UPDATED_AT": "2026-01-15T10:00:00", "ORDER_DATE": "2026-01-15", "ORDER_TIME": "10:00:00"},
             "headers": [
                 ("TableName", b"TEST_ORDERS"),
                 ("A_ENTTYP", b"PT"),
@@ -68,7 +68,7 @@ def produce_iidr_events(bootstrap_server, topic):
         },
         {
             "key": {"ID": 2},
-            "value": {"ID": 2, "ORDER_NAME": "Order-002", "AMOUNT": 200.75, "STATUS": "NEW", "CREATED_AT": "2026-01-15T10:01:00"},
+            "value": {"ID": 2, "ORDER_NAME": "Order-002", "AMOUNT": 200.75, "STATUS": "NEW", "CREATED_AT": "2026-01-15T10:01:00", "UPDATED_AT": "2026-01-15T10:01:00", "ORDER_DATE": "2026-01-15", "ORDER_TIME": "10:01:00"},
             "headers": [
                 ("TableName", b"TEST_ORDERS"),
                 ("A_ENTTYP", b"PT"),
@@ -77,7 +77,7 @@ def produce_iidr_events(bootstrap_server, topic):
         },
         {
             "key": {"ID": 3},
-            "value": {"ID": 3, "ORDER_NAME": "Order-003", "AMOUNT": 350.00, "STATUS": "PENDING", "CREATED_AT": "2026-01-15T10:02:00"},
+            "value": {"ID": 3, "ORDER_NAME": "Order-003", "AMOUNT": 350.00, "STATUS": "PENDING", "CREATED_AT": "2026-01-15T10:02:00", "UPDATED_AT": "2026-01-15T10:02:00", "ORDER_DATE": "2026-01-15", "ORDER_TIME": "10:02:00"},
             "headers": [
                 ("TableName", b"TEST_ORDERS"),
                 ("A_ENTTYP", b"PT"),
@@ -87,7 +87,7 @@ def produce_iidr_events(bootstrap_server, topic):
         # UPDATE event (A_ENTTYP = UP)
         {
             "key": {"ID": 2},
-            "value": {"ID": 2, "ORDER_NAME": "Order-002-Updated", "AMOUNT": 250.00, "STATUS": "PROCESSING", "CREATED_AT": "2026-01-15T10:01:00"},
+            "value": {"ID": 2, "ORDER_NAME": "Order-002-Updated", "AMOUNT": 250.00, "STATUS": "PROCESSING", "CREATED_AT": "2026-01-15T10:01:00", "UPDATED_AT": "2026-01-15T10:05:00", "ORDER_DATE": "2026-01-15", "ORDER_TIME": "10:01:00"},
             "headers": [
                 ("TableName", b"TEST_ORDERS"),
                 ("A_ENTTYP", b"UP"),
@@ -110,7 +110,7 @@ def produce_iidr_events(bootstrap_server, topic):
         # ============================================
         {
             "key": {"ID": 1},
-            "value": {"ID": 1, "ORDER_NAME": "V2-Order-001", "AMOUNT": 111.11, "STATUS": "NEW", "CREATED_AT": "2026-01-15T11:00:00"},
+            "value": {"ID": 1, "ORDER_NAME": "V2-Order-001", "AMOUNT": 111.11, "STATUS": "NEW", "CREATED_AT": "2026-01-15T11:00:00", "UPDATED_AT": "2026-01-15T11:00:00", "ORDER_DATE": "2026-01-15", "ORDER_TIME": "11:00:00"},
             "headers": [
                 ("TableName", b"TEST_ORDERS_v2"),
                 ("A_ENTTYP", b"PT"),
@@ -119,7 +119,7 @@ def produce_iidr_events(bootstrap_server, topic):
         },
         {
             "key": {"ID": 2},
-            "value": {"ID": 2, "ORDER_NAME": "V2-Order-002", "AMOUNT": 222.22, "STATUS": "PENDING", "CREATED_AT": "2026-01-15T11:01:00"},
+            "value": {"ID": 2, "ORDER_NAME": "V2-Order-002", "AMOUNT": 222.22, "STATUS": "PENDING", "CREATED_AT": "2026-01-15T11:01:00", "UPDATED_AT": "2026-01-15T11:01:00", "ORDER_DATE": "2026-01-15", "ORDER_TIME": "11:01:00"},
             "headers": [
                 ("TableName", b"TEST_ORDERS_v2"),
                 ("A_ENTTYP", b"PT"),
@@ -129,7 +129,7 @@ def produce_iidr_events(bootstrap_server, topic):
         # UPDATE event for TEST_ORDERS_v2
         {
             "key": {"ID": 1},
-            "value": {"ID": 1, "ORDER_NAME": "V2-Order-001-Updated", "AMOUNT": 119.99, "STATUS": "COMPLETED", "CREATED_AT": "2026-01-15T11:00:00"},
+            "value": {"ID": 1, "ORDER_NAME": "V2-Order-001-Updated", "AMOUNT": 119.99, "STATUS": "COMPLETED", "CREATED_AT": "2026-01-15T11:00:00", "UPDATED_AT": "2026-01-15T11:30:00", "ORDER_DATE": "2026-01-15", "ORDER_TIME": "11:00:00"},
             "headers": [
                 ("TableName", b"TEST_ORDERS_v2"),
                 ("A_ENTTYP", b"UP"),
@@ -142,7 +142,7 @@ def produce_iidr_events(bootstrap_server, topic):
         # ============================================
         {
             "key": {"ID": 1},
-            "value": {"ID": 1, "ORDER_NAME": "V3-Order-001", "AMOUNT": 333.33, "STATUS": "NEW", "CREATED_AT": "2026-01-15T12:00:00"},
+            "value": {"ID": 1, "ORDER_NAME": "V3-Order-001", "AMOUNT": 333.33, "STATUS": "NEW", "CREATED_AT": "2026-01-15T12:00:00", "UPDATED_AT": "2026-01-15T12:00:00", "ORDER_DATE": "2026-01-15", "ORDER_TIME": "12:00:00"},
             "headers": [
                 ("TableName", b"TEST_ORDERS_v3"),
                 ("A_ENTTYP", b"PT"),
@@ -151,7 +151,7 @@ def produce_iidr_events(bootstrap_server, topic):
         },
         {
             "key": {"ID": 2},
-            "value": {"ID": 2, "ORDER_NAME": "V3-Order-002", "AMOUNT": 444.44, "STATUS": "PROCESSING", "CREATED_AT": "2026-01-15T12:01:00"},
+            "value": {"ID": 2, "ORDER_NAME": "V3-Order-002", "AMOUNT": 444.44, "STATUS": "PROCESSING", "CREATED_AT": "2026-01-15 12:01:00", "UPDATED_AT": "2026-01-15 12:01:00", "ORDER_DATE": "2026-01-15", "ORDER_TIME": "12:01:00"},
             "headers": [
                 ("TableName", b"TEST_ORDERS_v3"),
                 ("A_ENTTYP", b"PT"),
@@ -160,7 +160,7 @@ def produce_iidr_events(bootstrap_server, topic):
         },
         {
             "key": {"ID": 3},
-            "value": {"ID": 3, "ORDER_NAME": "V3-Order-003", "AMOUNT": 555.55, "STATUS": "SHIPPED", "CREATED_AT": "2026-01-15T12:02:00"},
+            "value": {"ID": 3, "ORDER_NAME": "V3-Order-003", "AMOUNT": 555.55, "STATUS": "SHIPPED", "CREATED_AT": "2026-01-15 12:02:00", "UPDATED_AT": "2026-01-15 12:02:00", "ORDER_DATE": "2026-01-15", "ORDER_TIME": "12:02:00"},
             "headers": [
                 ("TableName", b"TEST_ORDERS_v3"),
                 ("A_ENTTYP", b"PT"),
@@ -183,7 +183,7 @@ def produce_iidr_events(bootstrap_server, topic):
         # ============================================
         {
             "key": {"ID": 99},
-            "value": {"ID": 99, "ORDER_NAME": "Corrupt-Order", "AMOUNT": 999.99, "STATUS": "BAD", "CREATED_AT": "2026-01-15T10:03:00"},
+            "value": {"ID": 99, "ORDER_NAME": "Corrupt-Order", "AMOUNT": 999.99, "STATUS": "BAD", "CREATED_AT": "2026-01-15 10:03:00", "UPDATED_AT": "2026-01-15 10:03:00", "ORDER_DATE": "2026-01-15", "ORDER_TIME": "10:03:00"},
             "headers": [
                 ("TableName", b"TEST_ORDERS"),
                 # Missing A_ENTTYP - should go to corrupt events table

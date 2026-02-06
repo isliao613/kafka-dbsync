@@ -22,12 +22,14 @@ public class JdbcWriter implements AutoCloseable {
     private final IidrCdcSinkConfig config;
     private final Dialect dialect;
     private final Map<String, PreparedStatement> statementCache;
+    private final Map<String, Map<String, Integer>> columnTypeCache;
 
     public JdbcWriter(Connection connection, IidrCdcSinkConfig config, Dialect dialect) {
         this.connection = connection;
         this.config = config;
         this.dialect = dialect;
         this.statementCache = new HashMap<>();
+        this.columnTypeCache = new HashMap<>();
     }
 
     /**
@@ -92,13 +94,14 @@ public class JdbcWriter implements AutoCloseable {
             throws SQLException {
         ProcessedRecord sample = records.get(0);
         List<String> columns = extractColumnNames(sample);
+        Map<String, Integer> columnTypes = getColumnTypes(tableName);
 
         String sql = dialect.buildInsertSql(tableName, columns);
         log.fine("INSERT SQL: " + sql);
 
         try (PreparedStatement ps = connection.prepareStatement(sql)) {
             for (ProcessedRecord record : records) {
-                setParameters(ps, record, columns);
+                setParameters(ps, record, columns, columnTypes);
                 ps.addBatch();
             }
             ps.executeBatch();
@@ -117,12 +120,13 @@ public class JdbcWriter implements AutoCloseable {
             return;
         }
 
+        Map<String, Integer> columnTypes = getColumnTypes(tableName);
         String sql = dialect.buildUpsertSql(tableName, columns, pkColumns);
         log.fine("UPDATE SQL: " + sql);
 
         try (PreparedStatement ps = connection.prepareStatement(sql)) {
             for (ProcessedRecord record : records) {
-                setUpdateParameters(ps, record, columns, pkColumns);
+                setUpdateParameters(ps, record, columns, pkColumns, columnTypes);
                 ps.addBatch();
             }
             ps.executeBatch();
@@ -134,13 +138,14 @@ public class JdbcWriter implements AutoCloseable {
         ProcessedRecord sample = records.get(0);
         List<String> columns = extractColumnNames(sample);
         List<String> pkColumns = config.getPkFields();
+        Map<String, Integer> columnTypes = getColumnTypes(tableName);
 
         String sql = dialect.buildUpsertSql(tableName, columns, pkColumns);
         log.fine("UPSERT SQL: " + sql);
 
         try (PreparedStatement ps = connection.prepareStatement(sql)) {
             for (ProcessedRecord record : records) {
-                setParameters(ps, record, columns);
+                setParameters(ps, record, columns, columnTypes);
                 ps.addBatch();
             }
             ps.executeBatch();
@@ -155,12 +160,13 @@ public class JdbcWriter implements AutoCloseable {
             return;
         }
 
+        Map<String, Integer> columnTypes = getColumnTypes(tableName);
         String sql = dialect.buildDeleteSql(tableName, pkColumns);
         log.fine("DELETE SQL: " + sql);
 
         try (PreparedStatement ps = connection.prepareStatement(sql)) {
             for (ProcessedRecord record : records) {
-                setDeleteParameters(ps, record, pkColumns);
+                setDeleteParameters(ps, record, pkColumns, columnTypes);
                 ps.addBatch();
             }
             ps.executeBatch();
@@ -170,16 +176,17 @@ public class JdbcWriter implements AutoCloseable {
     // Parameter Setting Methods
 
     private void setParameters(PreparedStatement ps, ProcessedRecord record,
-                               List<String> columns) throws SQLException {
+                               List<String> columns, Map<String, Integer> columnTypes) throws SQLException {
         Map<String, Object> values = extractValueMap(record);
         int idx = 1;
         for (String col : columns) {
-            ps.setObject(idx++, values.get(col));
+            setParameterWithType(ps, idx++, col, values.get(col), columnTypes);
         }
     }
 
     private void setUpdateParameters(PreparedStatement ps, ProcessedRecord record,
-                                     List<String> columns, List<String> pkColumns) throws SQLException {
+                                     List<String> columns, List<String> pkColumns,
+                                     Map<String, Integer> columnTypes) throws SQLException {
         Map<String, Object> values = extractValueMap(record);
         Map<String, Object> keyValues = extractKeyMap(record);
 
@@ -189,17 +196,17 @@ public class JdbcWriter implements AutoCloseable {
 
         int idx = 1;
         for (String col : nonPkColumns) {
-            ps.setObject(idx++, values.get(col));
+            setParameterWithType(ps, idx++, col, values.get(col), columnTypes);
         }
 
         // Then set PK columns for WHERE clause
         for (String col : pkColumns) {
-            ps.setObject(idx++, keyValues.getOrDefault(col, values.get(col)));
+            setParameterWithType(ps, idx++, col, keyValues.getOrDefault(col, values.get(col)), columnTypes);
         }
     }
 
     private void setDeleteParameters(PreparedStatement ps, ProcessedRecord record,
-                                     List<String> pkColumns) throws SQLException {
+                                     List<String> pkColumns, Map<String, Integer> columnTypes) throws SQLException {
         Map<String, Object> keyValues = extractKeyMap(record);
         Map<String, Object> values = extractValueMap(record);
 
@@ -209,8 +216,55 @@ public class JdbcWriter implements AutoCloseable {
             if (value == null) {
                 value = values.get(col);
             }
-            ps.setObject(idx++, value);
+            setParameterWithType(ps, idx++, col, value, columnTypes);
         }
+    }
+
+    // Column Type Methods
+
+    private Map<String, Integer> getColumnTypes(String tableName) throws SQLException {
+        Map<String, Integer> cached = columnTypeCache.get(tableName);
+        if (cached != null) {
+            return cached;
+        }
+        Map<String, Integer> types = new HashMap<>();
+        DatabaseMetaData meta = connection.getMetaData();
+        String normalizedTableName = dialect.normalizeIdentifierForMetadata(tableName);
+        try (ResultSet rs = meta.getColumns(null, null, normalizedTableName, null)) {
+            while (rs.next()) {
+                types.put(rs.getString("COLUMN_NAME").toUpperCase(), rs.getInt("DATA_TYPE"));
+            }
+        }
+        columnTypeCache.put(tableName, types);
+        return types;
+    }
+
+    private void setParameterWithType(PreparedStatement ps, int index, String columnName,
+                                      Object value, Map<String, Integer> columnTypes) throws SQLException {
+        if (value instanceof String) {
+            Integer sqlType = columnTypes.get(columnName.toUpperCase());
+            if (sqlType != null) {
+                String strVal = (String) value;
+                try {
+                    switch (sqlType) {
+                        case Types.TIMESTAMP:
+                        case Types.TIMESTAMP_WITH_TIMEZONE:
+                            ps.setTimestamp(index, Timestamp.valueOf(strVal.replace('T', ' ')));
+                            return;
+                        case Types.DATE:
+                            ps.setDate(index, java.sql.Date.valueOf(strVal.length() > 10 ? strVal.substring(0, 10) : strVal));
+                            return;
+                        case Types.TIME:
+                        case Types.TIME_WITH_TIMEZONE:
+                            ps.setTime(index, Time.valueOf(strVal));
+                            return;
+                    }
+                } catch (IllegalArgumentException e) {
+                    // fall through to setObject
+                }
+            }
+        }
+        ps.setObject(index, value);
     }
 
     // Helper Methods
@@ -313,6 +367,7 @@ public class JdbcWriter implements AutoCloseable {
             try (Statement stmt = connection.createStatement()) {
                 stmt.execute(ddl);
             }
+            columnTypeCache.remove(tableName);
         }
     }
 
