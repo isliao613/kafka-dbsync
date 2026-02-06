@@ -162,7 +162,9 @@ Events are corrupt if:
 - Unrecognized `A_ENTTYP` code
 - DELETE without key, or INSERT/UPDATE without value
 
-When `corrupt.events.table` is set, corrupt events are logged to:
+When `corrupt.events.table` is set, corrupt events are logged to the following table.
+
+**MariaDB/MySQL:**
 
 ```sql
 CREATE TABLE streaming_corrupt_events (
@@ -172,6 +174,27 @@ CREATE TABLE streaming_corrupt_events (
     kafka_offset BIGINT NOT NULL,
     record_key TEXT,
     record_value LONGTEXT,
+    headers TEXT,
+    error_reason VARCHAR(1000) NOT NULL,
+    table_name VARCHAR(255),
+    entry_type VARCHAR(10),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_topic_partition_offset (topic, kafka_partition, kafka_offset),
+    INDEX idx_table_name (table_name),
+    INDEX idx_created_at (created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+```
+
+**PostgreSQL:**
+
+```sql
+CREATE TABLE streaming_corrupt_events (
+    id BIGSERIAL PRIMARY KEY,
+    topic VARCHAR(255) NOT NULL,
+    kafka_partition INT NOT NULL,
+    kafka_offset BIGINT NOT NULL,
+    record_key TEXT,
+    record_value TEXT,
     headers TEXT,
     error_reason VARCHAR(1000) NOT NULL,
     table_name VARCHAR(255),

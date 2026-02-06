@@ -1,5 +1,5 @@
 {
-    "name": "iidr_cdc_sink_pg_test_3x",
+    "name": "iidr_cdc_sink_pg_corrupt_test_3x",
     "config": {
         "connector.class": "com.example.kafka.connect.iidr.IidrCdcSinkConnector",
         "tasks.max": "1",
@@ -10,7 +10,7 @@
         "connection.user": "postgres",
         "connection.password": "postgres_password",
 
-        "table.name.format": "TEST_ORDERS_v3",
+        "table.name.format": "TEST_ORDERS",
 
         "iidr.errors.tolerance": "log",
 
