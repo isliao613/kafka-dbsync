@@ -9,6 +9,7 @@ A Kafka Connect Sink Connector for processing IBM InfoSphere Data Replication (I
 - **Multi-Connector Filtering**: Multiple connectors can read the same topic, each processing only matching tables
 - **Configurable Error Handling**: Fail, log, or skip corrupt events
 - **Auto DDL**: Optionally create tables and evolve schemas automatically
+- **Type-Aware Parameter Binding**: Automatically converts string values to the correct JDBC type for date/time columns
 
 ## Quick Start
 
@@ -131,6 +132,28 @@ When `table.name.format` is a **literal value** (no `${TableName}`), the connect
   "headers": { "TableName": "ORDERS", "A_ENTTYP": "DL", "A_TIMSTAMP": "2026-01-15 10:00:00.000000" }
 }
 ```
+
+## Type-Aware Parameter Binding
+
+When record values arrive as JSON strings (schemaless mode), some JDBC drivers (notably PostgreSQL) will reject `setObject(idx, stringValue)` for typed columns like `TIMESTAMP` — they won't implicitly cast `VARCHAR → TIMESTAMP`.
+
+The connector resolves this by querying `DatabaseMetaData.getColumns()` to discover the SQL type of each target column, then using the appropriate typed setter:
+
+| Column SQL Type | JDBC Setter | String Format | Notes |
+|---|---|---|---|
+| `TIMESTAMP`, `TIMESTAMP WITH TIME ZONE` | `setTimestamp()` | `yyyy-MM-dd HH:mm:ss` or `yyyy-MM-ddTHH:mm:ss` | ISO-8601 `T` separator is normalized to space |
+| `DATE` | `setDate()` | `yyyy-MM-dd` | Full datetime strings are truncated to first 10 chars |
+| `TIME`, `TIME WITH TIME ZONE` | `setTime()` | `HH:mm:ss` | |
+
+Column type metadata is cached per table and invalidated when `auto.evolve` alters the table. If parsing fails for any value, the connector falls back to `setObject()` (the default JDBC behavior).
+
+### Supported Database Types
+
+| Type Category | MariaDB/MySQL | PostgreSQL |
+|---|---|---|
+| Timestamp | `DATETIME`, `TIMESTAMP` | `TIMESTAMP`, `TIMESTAMPTZ` |
+| Date | `DATE` | `DATE` |
+| Time | `TIME` | `TIME`, `TIMETZ` |
 
 ## Corrupt Events
 
