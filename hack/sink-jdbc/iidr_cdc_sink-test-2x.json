@@ -25,6 +25,7 @@
         "batch.size": "100",
         "max.retries": "3",
         "retry.backoff.ms": "1000",
+        "corrupt.events.table": "streaming_corrupt_events",
 
         "key.converter": "org.apache.kafka.connect.json.JsonConverter",
         "key.converter.schemas.enable": "false",
