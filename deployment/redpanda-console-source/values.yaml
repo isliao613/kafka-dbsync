@@ -1,0 +1,40 @@
+redpanda-console:
+  replicaCount: 1
+
+  image:
+    repository: redpandadata/console
+    tag: v3.3.2
+    pullPolicy: IfNotPresent
+
+  nameOverride: ""
+  fullnameOverride: ""
+
+  service:
+    type: ClusterIP
+    port: 8080
+
+  # MM2 source Kafka configuration
+  kafka:
+    brokers:
+      - dbrep-kafka-source:9092
+    sasl:
+      enabled: true
+      mechanism: PLAIN
+      username: admin
+      password: admin-secret
+
+  # Kafka Connect (MM2 connectors run on v3 worker)
+  connect:
+    enabled: true
+    clusters:
+      - name: kafka-connect-v3
+        url: http://dbrep-kafka-connect-v3-cp-kafka-connect:8083
+
+  resources:
+    limits: {}
+
+  nodeSelector: {}
+
+  tolerations: []
+
+  affinity: {}

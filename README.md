@@ -7,6 +7,7 @@ Kubernetes-based CDC toolkit for database replication using Kafka, Debezium, and
 - **Multi-Database CDC**: Oracle, MariaDB, PostgreSQL, MSSQL via Debezium
 - **Dual Debezium Support**: Run 2.x and 3.x side-by-side for migration testing
 - **IIDR Sink Connector**: Custom connector for IBM InfoSphere Data Replication events
+- **MirrorMaker 2**: Cross-cluster topic replication via MM2 Kafka Connect connectors
 - **Kafka 4.0**: KRaft mode (no ZooKeeper)
 - **Web UIs**: Redpanda Console and Kafka Connect UI
 - **Modular Makefiles**: Independent test suites that can run separately
@@ -14,12 +15,22 @@ Kubernetes-based CDC toolkit for database replication using Kafka, Debezium, and
 ## Architecture
 
 ```
+Pipeline 1: CDC Replication
+
 ┌─────────────┐     ┌─────────────────────────────────┐     ┌─────────────┐
 │   Source    │     │          Kafka Cluster          │     │   Target    │
 │  (Oracle/   │────▶│  ┌─────────────────────────┐    │────▶│ (MariaDB/   │
 │   MSSQL)    │     │  │ Kafka Connect 2.x / 3.x │    │     │ PostgreSQL) │
 └─────────────┘     │  └─────────────────────────┘    │     └─────────────┘
                     └─────────────────────────────────┘
+
+Pipeline 2: Cross-Cluster Replication (MirrorMaker 2)
+
+┌──────────────────┐     ┌───────────────┐     ┌──────────────────┐
+│  Source Kafka    │     │  MM2 Kafka    │     │  Target Kafka    │
+│ (dbrep-kafka-   │────▶│  Connect      │────▶│  (dbrep-kafka)   │
+│  source)         │     │               │     │                  │
+└──────────────────┘     └───────────────┘     └──────────────────┘
 ```
 
 ## Quick Start
@@ -39,7 +50,10 @@ make e2e-all-dual       # E2E: Oracle → MariaDB
 make datatype-all-dual  # Datatype comparison
 make iidr-all-dual      # IIDR sink: Kafka → MariaDB/PostgreSQL
 
-# 5. Cleanup
+# 5. (Optional) Deploy MirrorMaker 2 for cross-cluster replication
+make mm2-all            # Deploy MM2 Connect + register connectors
+
+# 6. Cleanup
 make clean
 ```
 
@@ -52,7 +66,7 @@ Each test suite has its own independent Makefile:
 | Makefile | Purpose | Example |
 |----------|---------|---------|
 | `Makefile.common` | Infrastructure & utilities | `make -f Makefile.common base-infra-up` |
-| `Makefile.docker` | Docker image builds | `make -f Makefile.docker build-v3` |
+| `Makefile.docker` | Docker image builds & MM2 | `make -f Makefile.docker build-v3` |
 | `Makefile.e2e` | E2E Oracle→MariaDB testing | `make -f Makefile.e2e all-dual` |
 | `Makefile.datatype` | Data type comparison | `make -f Makefile.datatype all-dual` |
 | `Makefile.iidr` | IIDR CDC sink testing | `make -f Makefile.iidr all-dual` |
@@ -70,6 +84,9 @@ Run `make -f <Makefile> help` to see available targets for each module.
 | `.tools` | Install kubectl, helm, kind |
 | `build-v2` / `build-v3` | Build Kafka Connect images |
 | `build-all` | Build both Debezium 2.x and 3.x images |
+| `deploy-mm2` | Deploy MirrorMaker 2 Kafka Connect worker |
+| `setup-mm2` | Submit MM2 connector configurations |
+| `mm2-all` | Deploy MM2 and submit connectors |
 | `port-forward` | Forward all service ports |
 
 ### E2E Testing (Oracle → MariaDB)
@@ -111,8 +128,8 @@ Run `make -f <Makefile> help` to see available targets for each module.
 
 | Target | Description |
 |--------|-------------|
-| `logs-v2` / `logs-v3` | View Kafka Connect logs |
-| `status-v2` / `status-v3` | Check connector status |
+| `logs-v2` / `logs-v3` / `logs-mm2` | View Kafka Connect logs |
+| `status-v2` / `status-v3` / `status-mm2` | Check connector status |
 | `setup-oracle` | Set up Oracle for CDC |
 | `setup-mariadb` | Set up MariaDB target |
 | `setup-postgres` | Set up PostgreSQL target |
@@ -126,9 +143,11 @@ make port-forward
 | UI | URL | Description |
 |----|-----|-------------|
 | Redpanda Console | http://localhost:8080 | Topics, messages, consumer groups |
+| Redpanda Console (source) | http://localhost:8081 | MM2 source Kafka topics |
 | Kafka Connect UI | http://localhost:8000 | Connector management |
 | Kafka Connect 2.x | http://localhost:8083 | REST API |
 | Kafka Connect 3.x | http://localhost:8084 | REST API |
+| MM2 Kafka Connect | http://localhost:8085 | REST API |
 
 ## Project Structure
 
@@ -143,14 +162,18 @@ kafka-dbsync/
 ├── Makefile.iidr        # IIDR sink testing
 ├── deployment/          # Helm wrapper charts
 │   ├── kafka/           # Kafka (Bitnami)
+│   ├── kafka-source/    # MM2 Source Kafka (Bitnami)
 │   ├── kafka-connect/   # Confluent Kafka Connect + Debezium
 │   │   └── docker/      # Custom connector source code
+│   ├── kafka-connect-mm2/ # MirrorMaker 2 Kafka Connect
+│   ├── redpanda-console-source/ # Redpanda Console for MM2 source Kafka
 │   ├── oracle/          # Oracle XE 21c
 │   ├── mariadb/         # MariaDB
 │   └── postgres/        # PostgreSQL
 ├── hack/                # Test configs and scripts
 │   ├── source-debezium/ # Debezium connector configs
 │   ├── sink-jdbc/       # JDBC sink configs
+│   ├── mm2/             # MirrorMaker 2 connector configs
 │   ├── scripts/         # Test producer scripts
 │   └── sql/             # Database setup scripts
 └── docs/                # Documentation
@@ -181,6 +204,29 @@ Supports both MariaDB and PostgreSQL targets with auto-create and auto-evolve.
 
 See [IIDR Connector README](deployment/kafka-connect/docker/sink/IidrCdcSinkConnector/README.md) for details.
 
+## MirrorMaker 2
+
+Cross-cluster topic replication from a separate source Kafka (`dbrep-kafka-source`) to the original Kafka (`dbrep-kafka`) using MM2 connectors running as a dedicated Kafka Connect cluster.
+
+| Connector | Purpose |
+|-----------|---------|
+| `MirrorSourceConnector` | Replicates topics (prefixed as `source.*` on target) |
+| `MirrorCheckpointConnector` | Translates consumer group offsets |
+| `MirrorHeartbeatConnector` | Cross-cluster heartbeat monitoring |
+
+```bash
+# Deploy MM2 source Kafka (included in base-infra-up) and MM2
+make mm2-all
+
+# Check MM2 connector status
+make status-mm2
+
+# View MM2 logs
+make logs-mm2
+```
+
+MM2 connector configs are in `hack/mm2/`. The MM2 Connect worker stores its internal topics on the target Kafka (`dbrep-kafka`).
+
 ## Troubleshooting
 
 ```bash
@@ -190,10 +236,12 @@ kubectl get pods -n dev
 # View logs
 make logs-v2
 make logs-v3
+make logs-mm2
 
 # Check connector status
 make status-v2
 make status-v3
+make status-mm2
 
 # Reset everything
 make clean && make base-infra-up && make build-all

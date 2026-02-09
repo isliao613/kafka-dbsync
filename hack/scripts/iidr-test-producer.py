@@ -22,10 +22,23 @@ except ImportError:
     exit(1)
 
 
-def create_topic(bootstrap_server, topic_name):
+def get_sasl_kwargs(args):
+    """Build SASL keyword arguments for Kafka clients."""
+    if not args.security_protocol or args.security_protocol == 'PLAINTEXT':
+        return {}
+    kwargs = {
+        'security_protocol': args.security_protocol,
+        'sasl_mechanism': args.sasl_mechanism,
+        'sasl_plain_username': args.sasl_username,
+        'sasl_plain_password': args.sasl_password,
+    }
+    return kwargs
+
+
+def create_topic(bootstrap_server, topic_name, sasl_kwargs=None):
     """Create Kafka topic if it doesn't exist."""
     try:
-        admin = KafkaAdminClient(bootstrap_servers=bootstrap_server)
+        admin = KafkaAdminClient(bootstrap_servers=bootstrap_server, **(sasl_kwargs or {}))
         existing_topics = admin.list_topics()
         if topic_name not in existing_topics:
             topic = NewTopic(name=topic_name, num_partitions=1, replication_factor=1)
@@ -38,13 +51,14 @@ def create_topic(bootstrap_server, topic_name):
         print(f"[WARN] Could not create topic: {e}")
 
 
-def produce_iidr_events(bootstrap_server, topic):
+def produce_iidr_events(bootstrap_server, topic, sasl_kwargs=None):
     """Produce test IIDR CDC events with headers."""
 
     producer = KafkaProducer(
         bootstrap_servers=bootstrap_server,
         key_serializer=lambda k: json.dumps(k).encode('utf-8') if k else None,
         value_serializer=lambda v: json.dumps(v).encode('utf-8') if v else None,
+        **(sasl_kwargs or {}),
     )
 
     timestamp_now = datetime.now().strftime("%Y-%m-%d %H:%M:%S.000000000000")
@@ -217,12 +231,18 @@ def main():
     parser.add_argument("--bootstrap-server", default="localhost:9092", help="Kafka bootstrap server")
     parser.add_argument("--topic", default="iidr.CDC.TEST_ORDERS", help="Kafka topic name")
     parser.add_argument("--create-topic", action="store_true", help="Create topic if not exists")
+    parser.add_argument("--security-protocol", default="PLAINTEXT", help="Security protocol (PLAINTEXT, SASL_PLAINTEXT)")
+    parser.add_argument("--sasl-mechanism", default="PLAIN", help="SASL mechanism")
+    parser.add_argument("--sasl-username", default="", help="SASL username")
+    parser.add_argument("--sasl-password", default="", help="SASL password")
     args = parser.parse_args()
 
-    if args.create_topic:
-        create_topic(args.bootstrap_server, args.topic)
+    sasl_kwargs = get_sasl_kwargs(args)
 
-    produce_iidr_events(args.bootstrap_server, args.topic)
+    if args.create_topic:
+        create_topic(args.bootstrap_server, args.topic, sasl_kwargs)
+
+    produce_iidr_events(args.bootstrap_server, args.topic, sasl_kwargs)
 
 
 if __name__ == "__main__":

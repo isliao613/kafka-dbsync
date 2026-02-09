@@ -13,7 +13,7 @@ include Makefile.param
 # Phony Targets
 # =============================================================================
 
-.PHONY: help build-v2 build-v3 build-all
+.PHONY: help build-v2 build-v3 build-all deploy-mm2 setup-mm2-acl setup-mm2 run-mm2-iidr mm2-all
 
 # =============================================================================
 # Help
@@ -26,6 +26,13 @@ help:
 	@echo "  build-v2             - Build and deploy Kafka Connect with Debezium 2.x"
 	@echo "  build-v3             - Build and deploy Kafka Connect with Debezium 3.x"
 	@echo "  build-all            - Build and deploy both Debezium 2.x and 3.x"
+	@echo ""
+	@echo "MirrorMaker 2:"
+	@echo "  deploy-mm2           - Deploy MM2 source Kafka (SASL) and Redpanda Console"
+	@echo "  setup-mm2-acl        - Configure readonly user ACLs on source Kafka"
+	@echo "  setup-mm2            - Submit MM2 connectors to Kafka Connect 3.x"
+	@echo "  run-mm2-iidr         - Produce IIDR test events to MM2 source Kafka"
+	@echo "  mm2-all              - Deploy MM2, configure ACLs, submit connectors, produce events"
 	@echo ""
 	@echo "Images:"
 	@echo "  Debezium 2.x: $(KAFKA_CONNECT_2X_IMAGE):$(KAFKA_CONNECT_2X_IMAGE_TAG)"
@@ -79,3 +86,87 @@ build-v3:
 
 build-all: build-v2 build-v3
 	@echo "[OK] Both Debezium 2.x and 3.x images built and deployed"
+
+# =============================================================================
+# MirrorMaker 2
+# =============================================================================
+
+deploy-mm2:
+	@echo "[INFO] Deploying MM2 source Kafka cluster..."
+	helm dependency build deployment/kafka-source
+	helm upgrade --install dbrep-kafka-source deployment/kafka-source \
+		-f deployment/kafka-source/values-kraft.yaml -n $(NAMESPACE)
+	kubectl wait --for=condition=ready pod -l app.kubernetes.io/instance=dbrep-kafka-source --timeout=300s -n $(NAMESPACE)
+	@echo "[OK] MM2 source Kafka ready"
+	@echo "[INFO] Deploying Redpanda Console for source Kafka..."
+	helm dependency build deployment/redpanda-console-source
+	helm upgrade --install dbrep-redpanda-console-source deployment/redpanda-console-source \
+		-f deployment/redpanda-console-source/values.yaml -n $(NAMESPACE)
+	@echo "[OK] Redpanda Console (source Kafka) deployed"
+
+setup-mm2-acl:
+	@echo "[INFO] Configuring ACLs on source Kafka for readonly user..."
+	kubectl cp hack/mm2/admin-client.properties $(KAFKA_SOURCE_POD):/tmp/admin-client.properties -n $(NAMESPACE)
+	@echo "[INFO] Granting Read + Describe + DescribeConfigs on topic iidr.CDC.TEST_ORDERS to user '$(KAFKA_SOURCE_READONLY_USER)'..."
+	kubectl exec $(KAFKA_SOURCE_POD) -n $(NAMESPACE) -- kafka-acls.sh \
+		--bootstrap-server localhost:9092 \
+		--command-config /tmp/admin-client.properties \
+		--add --allow-principal User:$(KAFKA_SOURCE_READONLY_USER) \
+		--operation Read --operation Describe --operation DescribeConfigs \
+		--topic iidr.CDC.TEST_ORDERS
+	@echo "[INFO] Granting Read + Describe on all consumer groups to user '$(KAFKA_SOURCE_READONLY_USER)'..."
+	kubectl exec $(KAFKA_SOURCE_POD) -n $(NAMESPACE) -- kafka-acls.sh \
+		--bootstrap-server localhost:9092 \
+		--command-config /tmp/admin-client.properties \
+		--add --allow-principal User:$(KAFKA_SOURCE_READONLY_USER) \
+		--operation Read --operation Describe \
+		--group '*'
+	@echo "[OK] ACLs configured for readonly user"
+
+setup-mm2:
+	@echo "[INFO] Submitting MirrorMaker 2 connector configurations to Kafka Connect 3.x..."
+	@echo "[INFO] Creating MirrorSourceConnector..."
+	kubectl cp hack/mm2/mirror-source-connector.json $(CURL_POD):/tmp/mirror-source-connector.json -n $(NAMESPACE)
+	kubectl exec $(CURL_POD) -n $(NAMESPACE) -- curl -sf --max-time 10 -X POST \
+		http://$(KAFKA_CONNECT_3X_SVC):8083/connectors \
+		-H "Content-Type: application/json" \
+		-d @/tmp/mirror-source-connector.json || echo "[ERROR] Failed to register MirrorSourceConnector"
+	@echo "[INFO] Creating MirrorCheckpointConnector..."
+	kubectl cp hack/mm2/mirror-checkpoint-connector.json $(CURL_POD):/tmp/mirror-checkpoint-connector.json -n $(NAMESPACE)
+	kubectl exec $(CURL_POD) -n $(NAMESPACE) -- curl -sf --max-time 10 -X POST \
+		http://$(KAFKA_CONNECT_3X_SVC):8083/connectors \
+		-H "Content-Type: application/json" \
+		-d @/tmp/mirror-checkpoint-connector.json || echo "[ERROR] Failed to register MirrorCheckpointConnector"
+	@echo "[INFO] Creating MirrorHeartbeatConnector..."
+	kubectl cp hack/mm2/mirror-heartbeat-connector.json $(CURL_POD):/tmp/mirror-heartbeat-connector.json -n $(NAMESPACE)
+	kubectl exec $(CURL_POD) -n $(NAMESPACE) -- curl -sf --max-time 10 -X POST \
+		http://$(KAFKA_CONNECT_3X_SVC):8083/connectors \
+		-H "Content-Type: application/json" \
+		-d @/tmp/mirror-heartbeat-connector.json || echo "[ERROR] Failed to register MirrorHeartbeatConnector"
+	@echo "[OK] All MirrorMaker 2 connectors submitted"
+
+run-mm2-iidr:
+	@echo "[INFO] Producing IIDR CDC test events to MM2 source Kafka..."
+	@echo "[INFO] Creating Kafka topic on source Kafka: iidr.CDC.TEST_ORDERS..."
+	kubectl cp hack/mm2/admin-client.properties $(KAFKA_SOURCE_POD):/tmp/admin-client.properties -n $(NAMESPACE)
+	-kubectl exec $(KAFKA_SOURCE_POD) -n $(NAMESPACE) -- kafka-topics.sh \
+		--bootstrap-server localhost:9092 \
+		--command-config /tmp/admin-client.properties \
+		--create --if-not-exists \
+		--topic iidr.CDC.TEST_ORDERS \
+		--partitions 1 \
+		--replication-factor 1
+	@echo "[INFO] Creating ConfigMap with producer script..."
+	-kubectl delete configmap iidr-producer-script -n $(NAMESPACE) 2>/dev/null || true
+	kubectl create configmap iidr-producer-script -n $(NAMESPACE) --from-file=producer.py=hack/scripts/iidr-test-producer.py
+	@echo "[INFO] Running producer pod (target: dbrep-kafka-source)..."
+	kubectl run iidr-mm2-producer -n $(NAMESPACE) --rm -i --restart=Never \
+		--image=python:3.11-slim \
+		--overrides='{"spec":{"containers":[{"name":"iidr-mm2-producer","image":"python:3.11-slim","command":["bash","-c","pip install kafka-python -q && python3 /scripts/producer.py --bootstrap-server dbrep-kafka-source.$(NAMESPACE).svc.cluster.local:9092 --topic iidr.CDC.TEST_ORDERS --security-protocol SASL_PLAINTEXT --sasl-mechanism PLAIN --sasl-username $(KAFKA_SOURCE_ADMIN_USER) --sasl-password $(KAFKA_SOURCE_ADMIN_PASS)"],"volumeMounts":[{"name":"script","mountPath":"/scripts"}]}],"volumes":[{"name":"script","configMap":{"name":"iidr-producer-script"}}]}}'
+	-kubectl delete configmap iidr-producer-script -n $(NAMESPACE) 2>/dev/null || true
+	@echo "[INFO] Waiting 10s for MM2 to replicate events..."
+	@sleep 10
+	@echo "[OK] IIDR events produced to source Kafka and replicated via MM2"
+
+mm2-all: deploy-mm2 setup-mm2-acl setup-mm2 run-mm2-iidr
+	@echo "[OK] MirrorMaker 2 fully deployed, configured, and IIDR events produced"

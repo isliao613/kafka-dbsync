@@ -1,0 +1,8 @@
+apiVersion: v2
+name: dbrep-redpanda-console-source
+description: A wrapper chart for Redpanda Console (MM2 source Kafka)
+version: 0.1.0
+dependencies:
+  - name: redpanda-console
+    version: 0.1.0
+    repository: "file://../../helm-chart/redpanda-console"

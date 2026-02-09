@@ -13,6 +13,13 @@ data:
         {{- range .Values.kafka.brokers }}
         - {{ . | quote }}
         {{- end }}
+      {{- if .Values.kafka.sasl.enabled }}
+      sasl:
+        enabled: true
+        mechanism: {{ .Values.kafka.sasl.mechanism }}
+        username: {{ .Values.kafka.sasl.username }}
+        password: {{ .Values.kafka.sasl.password }}
+      {{- end }}
     {{- if .Values.connect.enabled }}
     kafkaConnect:
       enabled: true

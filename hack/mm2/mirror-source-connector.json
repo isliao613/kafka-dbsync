@@ -1,0 +1,22 @@
+{
+  "name": "mirror-source-connector",
+  "config": {
+    "connector.class": "org.apache.kafka.connect.mirror.MirrorSourceConnector",
+    "source.cluster.alias": "source",
+    "target.cluster.alias": "target",
+    "source.cluster.bootstrap.servers": "dbrep-kafka-source:9092",
+    "source.cluster.security.protocol": "SASL_PLAINTEXT",
+    "source.cluster.sasl.mechanism": "PLAIN",
+    "source.cluster.sasl.jaas.config": "org.apache.kafka.common.security.plain.PlainLoginModule required username=\"readonly\" password=\"readonly-secret\";",
+    "target.cluster.bootstrap.servers": "dbrep-kafka:9092",
+    "topics": ".*",
+    "topics.exclude": "_.*,__.*,connect-.*",
+    "replication.factor": 1,
+    "offset-syncs.topic.replication.factor": 1,
+    "offset-syncs.topic.location": "target",
+    "sync.topic.configs.enabled": true,
+    "sync.topic.acls.enabled": false,
+    "key.converter": "org.apache.kafka.connect.converters.ByteArrayConverter",
+    "value.converter": "org.apache.kafka.connect.converters.ByteArrayConverter"
+  }
+}

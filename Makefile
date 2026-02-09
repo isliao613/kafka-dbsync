@@ -43,13 +43,20 @@ help:
 	@echo "  setup-mariadb        - Set up MariaDB target database"
 	@echo "  setup-postgres       - Set up PostgreSQL target database"
 	@echo "  logs-v2/logs-v3      - View Kafka Connect logs"
-	@echo "  status-v2/status-v3  - Check connector status"
+	@echo "  status-v2/status-v3  - Check connector status (v3 includes MM2)"
 	@echo "  port-forward         - Set up port forwarding"
 	@echo ""
 	@echo "=== Docker Builds (Makefile.docker) ==="
 	@echo "  build-v2             - Build Kafka Connect with Debezium 2.x"
 	@echo "  build-v3             - Build Kafka Connect with Debezium 3.x"
 	@echo "  build-all            - Build both Debezium 2.x and 3.x"
+	@echo ""
+	@echo "=== MirrorMaker 2 (Makefile.docker) ==="
+	@echo "  deploy-mm2           - Deploy MM2 source Kafka (SASL) and Redpanda Console"
+	@echo "  setup-mm2-acl        - Configure readonly user ACLs on source Kafka"
+	@echo "  setup-mm2            - Submit MM2 connectors to Kafka Connect 3.x"
+	@echo "  run-mm2-iidr         - Produce IIDR test events to MM2 source Kafka"
+	@echo "  mm2-all              - Deploy MM2, configure ACLs, submit connectors, produce events"
 	@echo ""
 	@echo "=== E2E Testing (Makefile.e2e) ==="
 	@echo "  e2e-all-v2           - Full E2E pipeline with Debezium 2.x"
@@ -86,7 +93,7 @@ help:
 	@echo ""
 	@echo "Dual Kafka Connect Services:"
 	@echo "  Debezium 2.x: $(KAFKA_CONNECT_2X_SVC):8083"
-	@echo "  Debezium 3.x: $(KAFKA_CONNECT_3X_SVC):8083"
+	@echo "  Debezium 3.x: $(KAFKA_CONNECT_3X_SVC):8083 (also hosts MM2 connectors)"
 
 # =============================================================================
 # Infrastructure (Makefile.common)
@@ -122,11 +129,17 @@ logs-v2:
 logs-v3:
 	@$(MAKE) -f Makefile.common logs-v3
 
+logs-mm2:
+	@$(MAKE) -f Makefile.common logs-mm2
+
 status-v2:
 	@$(MAKE) -f Makefile.common status-v2
 
 status-v3:
 	@$(MAKE) -f Makefile.common status-v3
+
+status-mm2:
+	@$(MAKE) -f Makefile.common status-mm2
 
 port-forward:
 	@$(MAKE) -f Makefile.common port-forward
@@ -135,7 +148,7 @@ port-forward:
 # Docker Builds (Makefile.docker)
 # =============================================================================
 
-.PHONY: build-v2 build-v3 build-all
+.PHONY: build-v2 build-v3 build-all deploy-mm2 setup-mm2-acl setup-mm2 run-mm2-iidr mm2-all
 
 build-v2:
 	@$(MAKE) -f Makefile.docker build-v2
@@ -145,6 +158,21 @@ build-v3:
 
 build-all:
 	@$(MAKE) -f Makefile.docker build-all
+
+deploy-mm2:
+	@$(MAKE) -f Makefile.docker deploy-mm2
+
+setup-mm2-acl:
+	@$(MAKE) -f Makefile.docker setup-mm2-acl
+
+setup-mm2:
+	@$(MAKE) -f Makefile.docker setup-mm2
+
+run-mm2-iidr:
+	@$(MAKE) -f Makefile.docker run-mm2-iidr
+
+mm2-all:
+	@$(MAKE) -f Makefile.docker mm2-all
 
 # =============================================================================
 # E2E Testing (Makefile.e2e)

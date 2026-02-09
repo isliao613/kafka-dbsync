@@ -18,6 +18,11 @@ service:
 kafka:
   brokers:
     - dbrep-kafka:9092
+  sasl:
+    enabled: false
+    mechanism: PLAIN
+    username: ""
+    password: ""
 
 # Kafka Connect configuration
 connect:

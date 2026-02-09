@@ -44,7 +44,7 @@ help:
 	@echo ""
 	@echo "Dual Kafka Connect Services:"
 	@echo "  Debezium 2.x: $(KAFKA_CONNECT_2X_SVC):8083"
-	@echo "  Debezium 3.x: $(KAFKA_CONNECT_3X_SVC):8083"
+	@echo "  Debezium 3.x: $(KAFKA_CONNECT_3X_SVC):8083 (also hosts MM2 connectors)"
 
 # =============================================================================
 # Infrastructure Management
@@ -102,9 +102,11 @@ clean:
 	-helm uninstall dbrep-mariadb -n $(NAMESPACE) || true
 	-helm uninstall dbrep-postgres -n $(NAMESPACE) || true
 	-helm uninstall dbrep-redpanda-console -n $(NAMESPACE) || true
+	-helm uninstall dbrep-redpanda-console-source -n $(NAMESPACE) || true
 	-helm uninstall dbrep-kafka-connect-ui -n $(NAMESPACE) || true
 	-helm uninstall dbrep-kafka-connect -n $(NAMESPACE) || true
 	-helm uninstall dbrep-kafka-connect-v3 -n $(NAMESPACE) || true
+	-helm uninstall dbrep-kafka-source -n $(NAMESPACE) || true
 	-helm uninstall dbrep-kafka -n $(NAMESPACE) || true
 	-helm uninstall dbrep-curl-client -n $(NAMESPACE) || true
 	-kubectl delete pvc --all -n $(NAMESPACE) || true
@@ -207,10 +209,12 @@ port-forward:
 	@echo "Setting up port forwarding..."
 	@echo "Kafka Connect UI: http://localhost:8000"
 	@echo "Redpanda Console: http://localhost:8080"
+	@echo "Redpanda Console (source): http://localhost:8081"
 	@echo "Kafka Connect 2.x API: http://localhost:8083"
 	@echo "Kafka Connect 3.x API: http://localhost:8084"
 	kubectl port-forward svc/dbrep-kafka-connect-ui 8000:80 -n $(NAMESPACE) &
 	kubectl port-forward svc/dbrep-redpanda-console 8080:8080 -n $(NAMESPACE) &
+	-kubectl port-forward svc/dbrep-redpanda-console-source 8081:8080 -n $(NAMESPACE) &
 	kubectl port-forward svc/$(KAFKA_CONNECT_2X_SVC) 8083:8083 -n $(NAMESPACE) &
 	kubectl port-forward svc/$(KAFKA_CONNECT_3X_SVC) 8084:8083 -n $(NAMESPACE) &
 	@echo "[INFO] Port forwarding started in background. Press Ctrl+C to stop all."

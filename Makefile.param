@@ -39,6 +39,13 @@ POSTGRES_USER ?= postgres
 POSTGRES_PASS ?= postgres_password
 POSTGRES_DB ?= target_database
 
+# Source Kafka (MM2 source cluster)
+KAFKA_SOURCE_POD ?= dbrep-kafka-source-controller-0
+KAFKA_SOURCE_ADMIN_USER ?= admin
+KAFKA_SOURCE_ADMIN_PASS ?= admin-secret
+KAFKA_SOURCE_READONLY_USER ?= readonly
+KAFKA_SOURCE_READONLY_PASS ?= readonly-secret
+
 # Internal helpers
 CURL_POD = $(shell kubectl get pod -l app.kubernetes.io/name=curl-client -n $(NAMESPACE) -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
 ORACLE_POD = $(shell kubectl get pods -n $(NAMESPACE) -l app=oracle-db -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
