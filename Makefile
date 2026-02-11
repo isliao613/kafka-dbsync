@@ -79,6 +79,8 @@ help:
 	@echo "  iidr-register-v2/v3  - Register IIDR MariaDB sink connectors"
 	@echo "  iidr-register-pg-v2  - Register IIDR PostgreSQL sink on 2.x"
 	@echo "  iidr-register-pg-v3  - Register IIDR PostgreSQL sink on 3.x"
+	@echo "  iidr-register-jdbc-v2/v3    - Register IIDR JDBC sink (MariaDB, SMT-based)"
+	@echo "  iidr-register-jdbc-pg-v2/v3 - Register IIDR JDBC sink (PostgreSQL, SMT-based)"
 	@echo "  iidr-run             - Produce test IIDR CDC events"
 	@echo "  iidr-verify          - Verify data in MariaDB and PostgreSQL"
 	@echo "  iidr-status-v2/v3    - Check IIDR connector status"
@@ -224,6 +226,7 @@ datatype-clean:
 
 .PHONY: iidr-all-v2 iidr-all-v3 iidr-all-dual \
 	iidr-setup iidr-register-v2 iidr-register-v3 iidr-register-pg-v2 iidr-register-pg-v3 \
+	iidr-register-jdbc-v2 iidr-register-jdbc-v3 iidr-register-jdbc-pg-v2 iidr-register-jdbc-pg-v3 \
 	iidr-run iidr-verify iidr-status-v2 iidr-status-v3 iidr-clean
 
 iidr-all-v2:
@@ -249,6 +252,18 @@ iidr-register-pg-v2:
 
 iidr-register-pg-v3:
 	@$(MAKE) -f Makefile.iidr register-pg-v3
+
+iidr-register-jdbc-v2:
+	@$(MAKE) -f Makefile.iidr register-jdbc-v2
+
+iidr-register-jdbc-v3:
+	@$(MAKE) -f Makefile.iidr register-jdbc-v3
+
+iidr-register-jdbc-pg-v2:
+	@$(MAKE) -f Makefile.iidr register-jdbc-pg-v2
+
+iidr-register-jdbc-pg-v3:
+	@$(MAKE) -f Makefile.iidr register-jdbc-pg-v3
 
 iidr-run:
 	@$(MAKE) -f Makefile.iidr run

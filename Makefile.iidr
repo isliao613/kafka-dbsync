@@ -26,6 +26,12 @@ IIDR_CONNECTOR_PG_3X := iidr_cdc_sink_pg_test_3x
 IIDR_CONNECTOR_CORRUPT_3X := iidr_cdc_sink_corrupt_test_3x
 IIDR_CONNECTOR_PG_CORRUPT_3X := iidr_cdc_sink_pg_corrupt_test_3x
 
+# JDBC Sink connector names (SMT-based approach)
+IIDR_JDBC_CONNECTOR_MARIADB_2X := iidr_jdbc_sink_test_2x
+IIDR_JDBC_CONNECTOR_MARIADB_3X := iidr_jdbc_sink_test_3x
+IIDR_JDBC_CONNECTOR_PG_2X := iidr_jdbc_sink_pg_test_2x
+IIDR_JDBC_CONNECTOR_PG_3X := iidr_jdbc_sink_pg_test_3x
+
 # =============================================================================
 # Phony Targets
 # =============================================================================
@@ -33,6 +39,7 @@ IIDR_CONNECTOR_PG_CORRUPT_3X := iidr_cdc_sink_pg_corrupt_test_3x
 .PHONY: help all-v2 all-v3 all-dual \
 	setup setup-mariadb setup-postgres \
 	register-v2 register-v3 register-pg-v2 register-pg-v3 register-corrupt-v3 \
+	register-jdbc-v2 register-jdbc-v3 register-jdbc-pg-v2 register-jdbc-pg-v3 \
 	run verify status-v2 status-v3 clean
 
 # =============================================================================
@@ -59,6 +66,12 @@ help:
 	@echo "Connector Registration (PostgreSQL):"
 	@echo "  register-pg-v2       - Register IIDR PostgreSQL sink on Debezium 2.x"
 	@echo "  register-pg-v3       - Register IIDR PostgreSQL sink on Debezium 3.x"
+	@echo ""
+	@echo "JDBC Sink Connector Registration (SMT-based):"
+	@echo "  register-jdbc-v2     - Register IIDR JDBC sink (MariaDB) on Debezium 2.x"
+	@echo "  register-jdbc-v3     - Register IIDR JDBC sink (MariaDB) on Debezium 3.x"
+	@echo "  register-jdbc-pg-v2  - Register IIDR JDBC sink (PostgreSQL) on Debezium 2.x"
+	@echo "  register-jdbc-pg-v3  - Register IIDR JDBC sink (PostgreSQL) on Debezium 3.x"
 	@echo ""
 	@echo "Testing:"
 	@echo "  run                  - Produce test IIDR CDC events to Kafka"
@@ -327,6 +340,82 @@ register-corrupt-v3:
 		fi'
 
 # =============================================================================
+# JDBC Sink Connector Registration (SMT-based)
+# =============================================================================
+
+register-jdbc-v2:
+	@echo "[INFO] Registering IIDR JDBC sink connector (MariaDB) on Debezium 2.x..."
+	kubectl cp hack/sink-jdbc/iidr_jdbc_sink-test-2x.json $(CURL_POD):/tmp/iidr_jdbc_sink-test-2x.json -n $(NAMESPACE)
+	@kubectl exec $(CURL_POD) -n $(NAMESPACE) -- sh -c '\
+		if curl -sf -o /dev/null --max-time 10 \
+			http://$(KAFKA_CONNECT_2X_SVC):8083/connectors/$(IIDR_JDBC_CONNECTOR_MARIADB_2X) 2>/dev/null; then \
+			echo "[SKIP] Connector $(IIDR_JDBC_CONNECTOR_MARIADB_2X) already exists."; \
+		else \
+			curl -sf --max-time 10 -X POST \
+				http://$(KAFKA_CONNECT_2X_SVC):8083/connectors \
+				-H "Content-Type: application/json" \
+				-d @/tmp/iidr_jdbc_sink-test-2x.json || { echo "[ERROR] Failed to register connector"; exit 1; }; \
+			echo; \
+			echo "[OK] IIDR JDBC sink connector (MariaDB) registered on 2.x"; \
+			echo "[INFO] Waiting 5s for connector to start..."; \
+			sleep 5; \
+		fi'
+
+register-jdbc-v3:
+	@echo "[INFO] Registering IIDR JDBC sink connector (MariaDB) on Debezium 3.x..."
+	kubectl cp hack/sink-jdbc/iidr_jdbc_sink-test-3x.json $(CURL_POD):/tmp/iidr_jdbc_sink-test-3x.json -n $(NAMESPACE)
+	@kubectl exec $(CURL_POD) -n $(NAMESPACE) -- sh -c '\
+		if curl -sf -o /dev/null --max-time 10 \
+			http://$(KAFKA_CONNECT_3X_SVC):8083/connectors/$(IIDR_JDBC_CONNECTOR_MARIADB_3X) 2>/dev/null; then \
+			echo "[SKIP] Connector $(IIDR_JDBC_CONNECTOR_MARIADB_3X) already exists."; \
+		else \
+			curl -sf --max-time 10 -X POST \
+				http://$(KAFKA_CONNECT_3X_SVC):8083/connectors \
+				-H "Content-Type: application/json" \
+				-d @/tmp/iidr_jdbc_sink-test-3x.json || { echo "[ERROR] Failed to register connector"; exit 1; }; \
+			echo; \
+			echo "[OK] IIDR JDBC sink connector (MariaDB) registered on 3.x"; \
+			echo "[INFO] Waiting 5s for connector to start..."; \
+			sleep 5; \
+		fi'
+
+register-jdbc-pg-v2:
+	@echo "[INFO] Registering IIDR JDBC sink connector (PostgreSQL) on Debezium 2.x..."
+	kubectl cp hack/sink-jdbc/iidr_jdbc_sink-pg-test-2x.json $(CURL_POD):/tmp/iidr_jdbc_sink-pg-test-2x.json -n $(NAMESPACE)
+	@kubectl exec $(CURL_POD) -n $(NAMESPACE) -- sh -c '\
+		if curl -sf -o /dev/null --max-time 10 \
+			http://$(KAFKA_CONNECT_2X_SVC):8083/connectors/$(IIDR_JDBC_CONNECTOR_PG_2X) 2>/dev/null; then \
+			echo "[SKIP] Connector $(IIDR_JDBC_CONNECTOR_PG_2X) already exists."; \
+		else \
+			curl -sf --max-time 10 -X POST \
+				http://$(KAFKA_CONNECT_2X_SVC):8083/connectors \
+				-H "Content-Type: application/json" \
+				-d @/tmp/iidr_jdbc_sink-pg-test-2x.json || { echo "[ERROR] Failed to register connector"; exit 1; }; \
+			echo; \
+			echo "[OK] IIDR JDBC sink connector (PostgreSQL) registered on 2.x"; \
+			echo "[INFO] Waiting 5s for connector to start..."; \
+			sleep 5; \
+		fi'
+
+register-jdbc-pg-v3:
+	@echo "[INFO] Registering IIDR JDBC sink connector (PostgreSQL) on Debezium 3.x..."
+	kubectl cp hack/sink-jdbc/iidr_jdbc_sink-pg-test-3x.json $(CURL_POD):/tmp/iidr_jdbc_sink-pg-test-3x.json -n $(NAMESPACE)
+	@kubectl exec $(CURL_POD) -n $(NAMESPACE) -- sh -c '\
+		if curl -sf -o /dev/null --max-time 10 \
+			http://$(KAFKA_CONNECT_3X_SVC):8083/connectors/$(IIDR_JDBC_CONNECTOR_PG_3X) 2>/dev/null; then \
+			echo "[SKIP] Connector $(IIDR_JDBC_CONNECTOR_PG_3X) already exists."; \
+		else \
+			curl -sf --max-time 10 -X POST \
+				http://$(KAFKA_CONNECT_3X_SVC):8083/connectors \
+				-H "Content-Type: application/json" \
+				-d @/tmp/iidr_jdbc_sink-pg-test-3x.json || { echo "[ERROR] Failed to register connector"; exit 1; }; \
+			echo; \
+			echo "[OK] IIDR JDBC sink connector (PostgreSQL) registered on 3.x"; \
+			echo "[INFO] Waiting 5s for connector to start..."; \
+			sleep 5; \
+		fi'
+
+# =============================================================================
 # Testing
 # =============================================================================
 
@@ -417,6 +506,14 @@ clean:
 		http://$(KAFKA_CONNECT_3X_SVC):8083/connectors/$(IIDR_CONNECTOR_CORRUPT_3X)
 	-kubectl exec $(CURL_POD) -n $(NAMESPACE) -- curl -s -X DELETE \
 		http://$(KAFKA_CONNECT_3X_SVC):8083/connectors/$(IIDR_CONNECTOR_PG_CORRUPT_3X)
+	-kubectl exec $(CURL_POD) -n $(NAMESPACE) -- curl -s -X DELETE \
+		http://$(KAFKA_CONNECT_2X_SVC):8083/connectors/$(IIDR_JDBC_CONNECTOR_MARIADB_2X)
+	-kubectl exec $(CURL_POD) -n $(NAMESPACE) -- curl -s -X DELETE \
+		http://$(KAFKA_CONNECT_3X_SVC):8083/connectors/$(IIDR_JDBC_CONNECTOR_MARIADB_3X)
+	-kubectl exec $(CURL_POD) -n $(NAMESPACE) -- curl -s -X DELETE \
+		http://$(KAFKA_CONNECT_2X_SVC):8083/connectors/$(IIDR_JDBC_CONNECTOR_PG_2X)
+	-kubectl exec $(CURL_POD) -n $(NAMESPACE) -- curl -s -X DELETE \
+		http://$(KAFKA_CONNECT_3X_SVC):8083/connectors/$(IIDR_JDBC_CONNECTOR_PG_3X)
 	-kubectl exec $(MARIADB_POD) -n $(NAMESPACE) -- mysql -h $(MARIADB_HOST) -u$(MARIADB_USER) -p$(MARIADB_PASS) -e \
 		"DROP TABLE IF EXISTS target_database.TEST_ORDERS; DROP TABLE IF EXISTS target_database.TEST_ORDERS_v2; DROP TABLE IF EXISTS target_database.TEST_ORDERS_v3; DROP TABLE IF EXISTS target_database.streaming_corrupt_events;"
 	-kubectl exec $(POSTGRES_POD) -n $(NAMESPACE) -- env PGPASSWORD=$(POSTGRES_PASS) psql -U $(POSTGRES_USER) -d $(POSTGRES_DB) -c \
