@@ -1,7 +1,7 @@
 {
-    "name": "iidr_cdc_sink_test_2x",
+    "name": "iidr_jdbc_sink_test",
     "config": {
-        "connector.class": "com.example.kafka.connect.iidr.IidrCdcSinkConnector",
+        "connector.class": "io.confluent.connect.jdbc.JdbcSinkConnector",
         "tasks.max": "1",
 
         "topics": "iidr.CDC.TEST_ORDERS",
@@ -10,12 +10,10 @@
         "connection.user": "root",
         "connection.password": "root_password",
 
-        "table.name.format": "TEST_ORDERS_v2",
+        "table.name.format": "TEST_ORDERS",
 
-        "iidr.errors.tolerance": "log",
-
-        "default.timezone": "Asia/Taipei",
-
+        "insert.mode": "upsert",
+        "delete.enabled": "true",
         "pk.mode": "record_key",
         "pk.fields": "ID",
 
@@ -23,9 +21,12 @@
         "auto.evolve": "false",
 
         "batch.size": "100",
-        "max.retries": "3",
-        "retry.backoff.ms": "1000",
-        "corrupt.events.table": "streaming_corrupt_events",
+
+        "errors.tolerance": "none",
+
+        "transforms": "iidrToJdbc",
+        "transforms.iidrToJdbc.type": "com.example.debezium.smt.IidrToJdbcSinkTransform",
+        "transforms.iidrToJdbc.table.name.filter": "TEST_ORDERS",
 
         "key.converter": "org.apache.kafka.connect.json.JsonConverter",
         "key.converter.schemas.enable": "false",

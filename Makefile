@@ -42,60 +42,49 @@ help:
 	@echo "  setup-oracle         - Set up Oracle XE 21c for CDC"
 	@echo "  setup-mariadb        - Set up MariaDB target database"
 	@echo "  setup-postgres       - Set up PostgreSQL target database"
-	@echo "  logs-v2/logs-v3      - View Kafka Connect logs"
-	@echo "  status-v2/status-v3  - Check connector status"
+	@echo "  logs                 - View Kafka Connect logs"
+	@echo "  status               - Check connector status"
 	@echo "  port-forward         - Set up port forwarding"
 	@echo ""
 	@echo "=== Docker Builds (Makefile.docker) ==="
-	@echo "  build-v2             - Build Kafka Connect with Debezium 2.x"
-	@echo "  build-v3             - Build Kafka Connect with Debezium 3.x"
-	@echo "  build-all            - Build both Debezium 2.x and 3.x"
+	@echo "  build                - Build Kafka Connect with Debezium"
 	@echo ""
 	@echo "=== E2E Testing (Makefile.e2e) ==="
-	@echo "  e2e-all-v2           - Full E2E pipeline with Debezium 2.x"
-	@echo "  e2e-all-v3           - Full E2E pipeline with Debezium 3.x"
-	@echo "  e2e-all-dual         - Full E2E pipeline with both versions"
+	@echo "  e2e-all              - Full E2E pipeline"
 	@echo "  e2e-setup            - Set up databases for testing"
 	@echo "  e2e-run              - Run CDC tests (insert, update, delete)"
 	@echo "  e2e-verify           - Verify data in target tables"
 	@echo "  e2e-clean            - Clean up connectors and tables"
-	@echo "  e2e-register-v2/v3   - Register connectors"
+	@echo "  e2e-register         - Register connectors"
 	@echo ""
 	@echo "=== Datatype Testing (Makefile.datatype) ==="
-	@echo "  datatype-all-v2      - Full datatype test with Debezium 2.x"
-	@echo "  datatype-all-v3      - Full datatype test with Debezium 3.x"
-	@echo "  datatype-all-dual    - Full datatype test with both versions"
+	@echo "  datatype-all         - Full datatype test"
 	@echo "  datatype-setup       - Set up Oracle and MariaDB for datatype testing"
-	@echo "  datatype-register-v2 - Register Debezium 2.x connectors"
-	@echo "  datatype-register-v3 - Register Debezium 3.x connectors"
+	@echo "  datatype-register    - Register Debezium connectors"
 	@echo "  datatype-verify      - Verify data in MariaDB"
 	@echo "  datatype-clean       - Clean up connectors and tables"
 	@echo ""
 	@echo "=== IIDR CDC Sink Testing (Makefile.iidr) ==="
-	@echo "  iidr-all-v2          - Full IIDR test with Debezium 2.x"
-	@echo "  iidr-all-v3          - Full IIDR test with Debezium 3.x"
-	@echo "  iidr-all-dual        - Full IIDR test with both versions"
+	@echo "  iidr-all             - Full IIDR test"
 	@echo "  iidr-setup           - Set up Kafka topic and databases"
-	@echo "  iidr-register-v2/v3  - Register IIDR MariaDB sink connectors"
-	@echo "  iidr-register-pg-v2  - Register IIDR PostgreSQL sink on 2.x"
-	@echo "  iidr-register-pg-v3  - Register IIDR PostgreSQL sink on 3.x"
-	@echo "  iidr-register-jdbc-v2/v3    - Register IIDR JDBC sink (MariaDB, SMT-based)"
-	@echo "  iidr-register-jdbc-pg-v2/v3 - Register IIDR JDBC sink (PostgreSQL, SMT-based)"
+	@echo "  iidr-register        - Register IIDR MariaDB sink connector"
+	@echo "  iidr-register-pg     - Register IIDR PostgreSQL sink"
+	@echo "  iidr-register-jdbc   - Register IIDR JDBC sink (MariaDB, SMT-based)"
+	@echo "  iidr-register-jdbc-pg - Register IIDR JDBC sink (PostgreSQL, SMT-based)"
 	@echo "  iidr-run             - Produce test IIDR CDC events"
 	@echo "  iidr-verify          - Verify data in MariaDB and PostgreSQL"
-	@echo "  iidr-status-v2/v3    - Check IIDR connector status"
+	@echo "  iidr-status          - Check IIDR connector status"
 	@echo "  iidr-clean           - Clean up IIDR test resources"
 	@echo ""
-	@echo "Dual Kafka Connect Services:"
-	@echo "  Debezium 2.x: $(KAFKA_CONNECT_2X_SVC):8083"
-	@echo "  Debezium 3.x: $(KAFKA_CONNECT_3X_SVC):8083"
+	@echo "Kafka Connect Service:"
+	@echo "  Debezium: $(KAFKA_CONNECT_SVC):8083"
 
 # =============================================================================
 # Infrastructure (Makefile.common)
 # =============================================================================
 
 .PHONY: base-infra-up clean .tools .check-tools setup-oracle setup-mariadb setup-postgres \
-	logs-v2 logs-v3 status-v2 status-v3 port-forward
+	logs status port-forward
 
 base-infra-up:
 	@$(MAKE) -f Makefile.common base-infra-up
@@ -118,17 +107,11 @@ setup-mariadb:
 setup-postgres:
 	@$(MAKE) -f Makefile.common setup-postgres
 
-logs-v2:
-	@$(MAKE) -f Makefile.common logs-v2
+logs:
+	@$(MAKE) -f Makefile.common logs
 
-logs-v3:
-	@$(MAKE) -f Makefile.common logs-v3
-
-status-v2:
-	@$(MAKE) -f Makefile.common status-v2
-
-status-v3:
-	@$(MAKE) -f Makefile.common status-v3
+status:
+	@$(MAKE) -f Makefile.common status
 
 port-forward:
 	@$(MAKE) -f Makefile.common port-forward
@@ -137,33 +120,21 @@ port-forward:
 # Docker Builds (Makefile.docker)
 # =============================================================================
 
-.PHONY: build-v2 build-v3 build-all
+.PHONY: build
 
-build-v2:
-	@$(MAKE) -f Makefile.docker build-v2
-
-build-v3:
-	@$(MAKE) -f Makefile.docker build-v3
-
-build-all:
-	@$(MAKE) -f Makefile.docker build-all
+build:
+	@$(MAKE) -f Makefile.docker build
 
 # =============================================================================
 # E2E Testing (Makefile.e2e)
 # =============================================================================
 
-.PHONY: e2e-all-v2 e2e-all-v3 e2e-all-dual \
-	e2e-setup e2e-run e2e-verify e2e-clean e2e-clean-v2 e2e-clean-v3 \
-	e2e-register-v2 e2e-register-v3
+.PHONY: e2e-all \
+	e2e-setup e2e-run e2e-verify e2e-clean \
+	e2e-register
 
-e2e-all-v2:
-	@$(MAKE) -f Makefile.e2e all-v2
-
-e2e-all-v3:
-	@$(MAKE) -f Makefile.e2e all-v3
-
-e2e-all-dual:
-	@$(MAKE) -f Makefile.e2e all-dual
+e2e-all:
+	@$(MAKE) -f Makefile.e2e all
 
 e2e-setup:
 	@$(MAKE) -f Makefile.e2e test-setup
@@ -177,42 +148,24 @@ e2e-verify:
 e2e-clean:
 	@$(MAKE) -f Makefile.e2e test-clean
 
-e2e-clean-v2:
-	@$(MAKE) -f Makefile.e2e test-clean-v2
-
-e2e-clean-v3:
-	@$(MAKE) -f Makefile.e2e test-clean-v3
-
-e2e-register-v2:
-	@$(MAKE) -f Makefile.e2e register-v2
-
-e2e-register-v3:
-	@$(MAKE) -f Makefile.e2e register-v3
+e2e-register:
+	@$(MAKE) -f Makefile.e2e register
 
 # =============================================================================
 # Datatype Testing (Makefile.datatype)
 # =============================================================================
 
-.PHONY: datatype-all-v2 datatype-all-v3 datatype-all-dual \
-	datatype-setup datatype-register-v2 datatype-register-v3 datatype-verify datatype-clean
+.PHONY: datatype-all \
+	datatype-setup datatype-register datatype-verify datatype-clean
 
-datatype-all-v2:
-	@$(MAKE) -f Makefile.datatype all-v2
-
-datatype-all-v3:
-	@$(MAKE) -f Makefile.datatype all-v3
-
-datatype-all-dual:
-	@$(MAKE) -f Makefile.datatype all-dual
+datatype-all:
+	@$(MAKE) -f Makefile.datatype all
 
 datatype-setup:
 	@$(MAKE) -f Makefile.datatype setup
 
-datatype-register-v2:
-	@$(MAKE) -f Makefile.datatype register-v2
-
-datatype-register-v3:
-	@$(MAKE) -f Makefile.datatype register-v3
+datatype-register:
+	@$(MAKE) -f Makefile.datatype register
 
 datatype-verify:
 	@$(MAKE) -f Makefile.datatype verify
@@ -224,46 +177,28 @@ datatype-clean:
 # IIDR CDC Sink Testing (Makefile.iidr)
 # =============================================================================
 
-.PHONY: iidr-all-v2 iidr-all-v3 iidr-all-dual \
-	iidr-setup iidr-register-v2 iidr-register-v3 iidr-register-pg-v2 iidr-register-pg-v3 \
-	iidr-register-jdbc-v2 iidr-register-jdbc-v3 iidr-register-jdbc-pg-v2 iidr-register-jdbc-pg-v3 \
-	iidr-run iidr-verify iidr-status-v2 iidr-status-v3 iidr-clean
+.PHONY: iidr-all \
+	iidr-setup iidr-register iidr-register-pg \
+	iidr-register-jdbc iidr-register-jdbc-pg \
+	iidr-run iidr-verify iidr-status iidr-clean
 
-iidr-all-v2:
-	@$(MAKE) -f Makefile.iidr all-v2
-
-iidr-all-v3:
-	@$(MAKE) -f Makefile.iidr all-v3
-
-iidr-all-dual:
-	@$(MAKE) -f Makefile.iidr all-dual
+iidr-all:
+	@$(MAKE) -f Makefile.iidr all
 
 iidr-setup:
 	@$(MAKE) -f Makefile.iidr setup
 
-iidr-register-v2:
-	@$(MAKE) -f Makefile.iidr register-v2
+iidr-register:
+	@$(MAKE) -f Makefile.iidr register
 
-iidr-register-v3:
-	@$(MAKE) -f Makefile.iidr register-v3
+iidr-register-pg:
+	@$(MAKE) -f Makefile.iidr register-pg
 
-iidr-register-pg-v2:
-	@$(MAKE) -f Makefile.iidr register-pg-v2
+iidr-register-jdbc:
+	@$(MAKE) -f Makefile.iidr register-jdbc
 
-iidr-register-pg-v3:
-	@$(MAKE) -f Makefile.iidr register-pg-v3
-
-iidr-register-jdbc-v2:
-	@$(MAKE) -f Makefile.iidr register-jdbc-v2
-
-iidr-register-jdbc-v3:
-	@$(MAKE) -f Makefile.iidr register-jdbc-v3
-
-iidr-register-jdbc-pg-v2:
-	@$(MAKE) -f Makefile.iidr register-jdbc-pg-v2
-
-iidr-register-jdbc-pg-v3:
-	@$(MAKE) -f Makefile.iidr register-jdbc-pg-v3
+iidr-register-jdbc-pg:
+	@$(MAKE) -f Makefile.iidr register-jdbc-pg
 
 iidr-run:
 	@$(MAKE) -f Makefile.iidr run
@@ -271,11 +206,8 @@ iidr-run:
 iidr-verify:
 	@$(MAKE) -f Makefile.iidr verify
 
-iidr-status-v2:
-	@$(MAKE) -f Makefile.iidr status-v2
-
-iidr-status-v3:
-	@$(MAKE) -f Makefile.iidr status-v3
+iidr-status:
+	@$(MAKE) -f Makefile.iidr status
 
 iidr-clean:
 	@$(MAKE) -f Makefile.iidr clean

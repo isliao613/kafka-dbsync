@@ -49,13 +49,8 @@ def produce_iidr_events(bootstrap_server, topic):
 
     timestamp_now = datetime.now().strftime("%Y-%m-%d %H:%M:%S.000000000000")
 
-    # Test events: INSERT, UPDATE, DELETE for multiple tables
-    # This tests multi-connector table filtering where each connector
-    # reads the same topic but only processes its designated table
+    # Test events: INSERT, UPDATE, DELETE operations on TEST_ORDERS table
     test_events = [
-        # ============================================
-        # TEST_ORDERS table events
-        # ============================================
         # INSERT events (A_ENTTYP = PT)
         {
             "key": {"ID": 1},
@@ -105,88 +100,13 @@ def produce_iidr_events(bootstrap_server, topic):
             ]
         },
 
-        # ============================================
-        # TEST_ORDERS_v2 table events
-        # ============================================
-        {
-            "key": {"ID": 1},
-            "value": {"ID": 1, "ORDER_NAME": "V2-Order-001", "AMOUNT": 111.11, "STATUS": "NEW", "CREATED_AT": "2026-01-15T11:00:00", "UPDATED_AT": "2026-01-15T11:00:00", "ORDER_DATE": "2026-01-15", "ORDER_TIME": "11:00:00"},
-            "headers": [
-                ("TableName", b"TEST_ORDERS_v2"),
-                ("A_ENTTYP", b"PT"),
-                ("A_TIMSTAMP", timestamp_now.encode('utf-8'))
-            ]
-        },
-        {
-            "key": {"ID": 2},
-            "value": {"ID": 2, "ORDER_NAME": "V2-Order-002", "AMOUNT": 222.22, "STATUS": "PENDING", "CREATED_AT": "2026-01-15T11:01:00", "UPDATED_AT": "2026-01-15T11:01:00", "ORDER_DATE": "2026-01-15", "ORDER_TIME": "11:01:00"},
-            "headers": [
-                ("TableName", b"TEST_ORDERS_v2"),
-                ("A_ENTTYP", b"PT"),
-                ("A_TIMSTAMP", timestamp_now.encode('utf-8'))
-            ]
-        },
-        # UPDATE event for TEST_ORDERS_v2
-        {
-            "key": {"ID": 1},
-            "value": {"ID": 1, "ORDER_NAME": "V2-Order-001-Updated", "AMOUNT": 119.99, "STATUS": "COMPLETED", "CREATED_AT": "2026-01-15T11:00:00", "UPDATED_AT": "2026-01-15T11:30:00", "ORDER_DATE": "2026-01-15", "ORDER_TIME": "11:00:00"},
-            "headers": [
-                ("TableName", b"TEST_ORDERS_v2"),
-                ("A_ENTTYP", b"UP"),
-                ("A_TIMSTAMP", timestamp_now.encode('utf-8'))
-            ]
-        },
-
-        # ============================================
-        # TEST_ORDERS_v3 table events
-        # ============================================
-        {
-            "key": {"ID": 1},
-            "value": {"ID": 1, "ORDER_NAME": "V3-Order-001", "AMOUNT": 333.33, "STATUS": "NEW", "CREATED_AT": "2026-01-15T12:00:00", "UPDATED_AT": "2026-01-15T12:00:00", "ORDER_DATE": "2026-01-15", "ORDER_TIME": "12:00:00"},
-            "headers": [
-                ("TableName", b"TEST_ORDERS_v3"),
-                ("A_ENTTYP", b"PT"),
-                ("A_TIMSTAMP", timestamp_now.encode('utf-8'))
-            ]
-        },
-        {
-            "key": {"ID": 2},
-            "value": {"ID": 2, "ORDER_NAME": "V3-Order-002", "AMOUNT": 444.44, "STATUS": "PROCESSING", "CREATED_AT": "2026-01-15 12:01:00", "UPDATED_AT": "2026-01-15 12:01:00", "ORDER_DATE": "2026-01-15", "ORDER_TIME": "12:01:00"},
-            "headers": [
-                ("TableName", b"TEST_ORDERS_v3"),
-                ("A_ENTTYP", b"PT"),
-                ("A_TIMSTAMP", timestamp_now.encode('utf-8'))
-            ]
-        },
-        {
-            "key": {"ID": 3},
-            "value": {"ID": 3, "ORDER_NAME": "V3-Order-003", "AMOUNT": 555.55, "STATUS": "SHIPPED", "CREATED_AT": "2026-01-15 12:02:00", "UPDATED_AT": "2026-01-15 12:02:00", "ORDER_DATE": "2026-01-15", "ORDER_TIME": "12:02:00"},
-            "headers": [
-                ("TableName", b"TEST_ORDERS_v3"),
-                ("A_ENTTYP", b"PT"),
-                ("A_TIMSTAMP", timestamp_now.encode('utf-8'))
-            ]
-        },
-        # DELETE event for TEST_ORDERS_v3
-        {
-            "key": {"ID": 2},
-            "value": None,
-            "headers": [
-                ("TableName", b"TEST_ORDERS_v3"),
-                ("A_ENTTYP", b"DL"),
-                ("A_TIMSTAMP", timestamp_now.encode('utf-8'))
-            ]
-        },
-
-        # ============================================
-        # Corrupt event - missing A_ENTTYP header
-        # ============================================
+        # Corrupt event - missing A_ENTTYP header (should go to DLQ)
         {
             "key": {"ID": 99},
             "value": {"ID": 99, "ORDER_NAME": "Corrupt-Order", "AMOUNT": 999.99, "STATUS": "BAD", "CREATED_AT": "2026-01-15 10:03:00", "UPDATED_AT": "2026-01-15 10:03:00", "ORDER_DATE": "2026-01-15", "ORDER_TIME": "10:03:00"},
             "headers": [
                 ("TableName", b"TEST_ORDERS"),
-                # Missing A_ENTTYP - should go to corrupt events table
+                # Missing A_ENTTYP - should go to DLQ
                 ("A_TIMSTAMP", timestamp_now.encode('utf-8'))
             ]
         },

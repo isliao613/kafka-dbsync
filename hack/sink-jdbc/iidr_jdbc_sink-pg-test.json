@@ -1,16 +1,16 @@
 {
-    "name": "iidr_jdbc_sink_pg_test_2x",
+    "name": "iidr_jdbc_sink_pg_test",
     "config": {
         "connector.class": "io.confluent.connect.jdbc.JdbcSinkConnector",
         "tasks.max": "1",
 
         "topics": "iidr.CDC.TEST_ORDERS",
 
-        "connection.url": "jdbc:postgresql://dbrep-postgres-postgresql.dev.svc.cluster.local:5432/target_database?stringtype=unspecified",
+        "connection.url": "jdbc:postgresql://dbrep-postgres-postgresql.dev.svc.cluster.local:5432/target_database",
         "connection.user": "postgres",
         "connection.password": "postgres_password",
 
-        "table.name.format": "${topic}",
+        "table.name.format": "test_orders",
 
         "insert.mode": "upsert",
         "delete.enabled": "true",
@@ -22,15 +22,14 @@
 
         "batch.size": "100",
 
-        "errors.tolerance": "all",
-        "errors.deadletterqueue.topic.name": "dlq-iidr-jdbc-sink-pg",
-        "errors.deadletterqueue.topic.replication.factor": "1",
-        "errors.deadletterqueue.context.headers.enable": "true",
+        "errors.tolerance": "none",
 
         "transforms": "iidrToJdbc",
         "transforms.iidrToJdbc.type": "com.example.debezium.smt.IidrToJdbcSinkTransform",
+        "transforms.iidrToJdbc.table.name.filter": "TEST_ORDERS",
         "transforms.iidrToJdbc.table.name.case": "lower",
         "transforms.iidrToJdbc.field.name.case": "lower",
+        "transforms.iidrToJdbc.field.type.overrides": "created_at:timestamp,updated_at:timestamp,order_date:date,order_time:time",
 
         "key.converter": "org.apache.kafka.connect.json.JsonConverter",
         "key.converter.schemas.enable": "false",

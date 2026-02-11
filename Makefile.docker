@@ -13,7 +13,7 @@ include Makefile.param
 # Phony Targets
 # =============================================================================
 
-.PHONY: help build-v2 build-v3 build-all
+.PHONY: help build
 
 # =============================================================================
 # Help
@@ -23,59 +23,30 @@ help:
 	@echo "Usage: make -f Makefile.docker [target]"
 	@echo ""
 	@echo "Docker Image Build:"
-	@echo "  build-v2             - Build and deploy Kafka Connect with Debezium 2.x"
-	@echo "  build-v3             - Build and deploy Kafka Connect with Debezium 3.x"
-	@echo "  build-all            - Build and deploy both Debezium 2.x and 3.x"
+	@echo "  build                - Build and deploy Kafka Connect with Debezium"
 	@echo ""
-	@echo "Images:"
-	@echo "  Debezium 2.x: $(KAFKA_CONNECT_2X_IMAGE):$(KAFKA_CONNECT_2X_IMAGE_TAG)"
-	@echo "  Debezium 3.x: $(KAFKA_CONNECT_3X_IMAGE):$(KAFKA_CONNECT_3X_IMAGE_TAG)"
+	@echo "Image:"
+	@echo "  Debezium: $(KAFKA_CONNECT_IMAGE):$(KAFKA_CONNECT_IMAGE_TAG)"
 
 # =============================================================================
 # Docker Image Build
 # =============================================================================
 
-build-v2:
-	@echo "[INFO] Building Kafka Connect image with Debezium 2.x..."
-	docker build -t $(KAFKA_CONNECT_2X_IMAGE):$(KAFKA_CONNECT_2X_IMAGE_TAG) \
-		-f deployment/kafka-connect/docker/Dockerfile.debezium-v2 \
+build:
+	@echo "[INFO] Building Kafka Connect image with Debezium..."
+	docker build -t $(KAFKA_CONNECT_IMAGE):$(KAFKA_CONNECT_IMAGE_TAG) \
+		-f deployment/kafka-connect/docker/Dockerfile.debezium \
 		deployment/kafka-connect/docker
 	@echo "[INFO] Loading image into kind cluster..."
-	kind load docker-image $(KAFKA_CONNECT_2X_IMAGE):$(KAFKA_CONNECT_2X_IMAGE_TAG) --name $(CLUSTER_NAME)
-	-kubectl rollout restart deployment/$(KAFKA_CONNECT_2X_SVC) -n $(NAMESPACE) 2>/dev/null || true
-	@echo "[OK] Debezium 2.x image built and loaded"
-	@echo "[INFO] Deploying Kafka Connect (Debezium 2.x)..."
-	helm dependency build deployment/kafka-connect
-	helm upgrade --install dbrep-kafka-connect deployment/kafka-connect \
-		-f deployment/kafka-connect/values.yaml \
-		--set cp-kafka-connect.image=$(KAFKA_CONNECT_2X_IMAGE) \
-		--set cp-kafka-connect.imageTag=$(KAFKA_CONNECT_2X_IMAGE_TAG) \
-		-n $(NAMESPACE)
-	helm dependency build deployment/kafka-connect-ui
-	helm upgrade --install dbrep-kafka-connect-ui deployment/kafka-connect-ui \
-		-f deployment/kafka-connect-ui/values.yaml -n $(NAMESPACE)
-	@echo "[INFO] Waiting for Kafka Connect 2.x to be ready..."
-	kubectl rollout status deployment/$(KAFKA_CONNECT_2X_SVC) -n $(NAMESPACE) --timeout=300s
-	@echo "[OK] Debezium 2.x deployed and ready"
-
-build-v3:
-	@echo "[INFO] Building Kafka Connect image with Debezium 3.x..."
-	docker build -t $(KAFKA_CONNECT_3X_IMAGE):$(KAFKA_CONNECT_3X_IMAGE_TAG) \
-		-f deployment/kafka-connect/docker/Dockerfile.debezium-v3 \
-		deployment/kafka-connect/docker
-	@echo "[INFO] Loading image into kind cluster..."
-	kind load docker-image $(KAFKA_CONNECT_3X_IMAGE):$(KAFKA_CONNECT_3X_IMAGE_TAG) --name $(CLUSTER_NAME)
-	-kubectl rollout restart deployment/$(KAFKA_CONNECT_3X_SVC) -n $(NAMESPACE) 2>/dev/null || true
-	@echo "[OK] Debezium 3.x image built and loaded"
-	@echo "[INFO] Deploying Kafka Connect (Debezium 3.x)..."
+	kind load docker-image $(KAFKA_CONNECT_IMAGE):$(KAFKA_CONNECT_IMAGE_TAG) --name $(CLUSTER_NAME)
+	-kubectl rollout restart deployment/$(KAFKA_CONNECT_SVC) -n $(NAMESPACE) 2>/dev/null || true
+	@echo "[OK] Debezium image built and loaded"
+	@echo "[INFO] Deploying Kafka Connect..."
 	helm upgrade --install dbrep-kafka-connect-v3 deployment/kafka-connect \
 		-f deployment/kafka-connect/values.yaml \
-		--set cp-kafka-connect.image=$(KAFKA_CONNECT_3X_IMAGE) \
-		--set cp-kafka-connect.imageTag=$(KAFKA_CONNECT_3X_IMAGE_TAG) \
+		--set cp-kafka-connect.image=$(KAFKA_CONNECT_IMAGE) \
+		--set cp-kafka-connect.imageTag=$(KAFKA_CONNECT_IMAGE_TAG) \
 		-n $(NAMESPACE)
-	@echo "[INFO] Waiting for Kafka Connect 3.x to be ready..."
-	kubectl rollout status deployment/$(KAFKA_CONNECT_3X_SVC) -n $(NAMESPACE) --timeout=300s
-	@echo "[OK] Debezium 3.x deployed and ready"
-
-build-all: build-v2 build-v3
-	@echo "[OK] Both Debezium 2.x and 3.x images built and deployed"
+	@echo "[INFO] Waiting for Kafka Connect to be ready..."
+	kubectl rollout status deployment/$(KAFKA_CONNECT_SVC) -n $(NAMESPACE) --timeout=300s
+	@echo "[OK] Debezium deployed and ready"

@@ -1,16 +1,16 @@
 {
-    "name": "iidr_cdc_sink_pg_test_2x",
+    "name": "iidr_cdc_sink_corrupt_test",
     "config": {
         "connector.class": "com.example.kafka.connect.iidr.IidrCdcSinkConnector",
         "tasks.max": "1",
 
         "topics": "iidr.CDC.TEST_ORDERS",
 
-        "connection.url": "jdbc:postgresql://dbrep-postgres-postgresql.dev.svc.cluster.local:5432/target_database",
-        "connection.user": "postgres",
-        "connection.password": "postgres_password",
+        "connection.url": "jdbc:mariadb://dbrep-mariadb.dev.svc.cluster.local:3306/target_database",
+        "connection.user": "root",
+        "connection.password": "root_password",
 
-        "table.name.format": "TEST_ORDERS_v2",
+        "table.name.format": "TEST_ORDERS",
 
         "iidr.errors.tolerance": "log",
 
