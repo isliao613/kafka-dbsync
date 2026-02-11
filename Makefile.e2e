@@ -5,7 +5,7 @@
 #
 # Prerequisites:
 #   - Infrastructure deployed (make -f Makefile.common base-infra-up)
-#   - Kafka Connect images built (make -f Makefile.docker build-v2/v3)
+#   - Kafka Connect image built (make -f Makefile.docker build)
 #
 # ==============================================================================
 
@@ -17,10 +17,10 @@ include Makefile.param
 # Phony Targets
 # =============================================================================
 
-.PHONY: help all-v2 all-v3 all-dual \
-	test test-setup test-run test-verify test-clean test-clean-v2 test-clean-v3 \
+.PHONY: help all \
+	test test-setup test-run test-verify test-clean \
 	setup-oracle setup-mariadb setup-postgres \
-	register-v2 register-v3 verify-v2 verify-v3
+	register verify
 
 # =============================================================================
 # Help
@@ -30,9 +30,7 @@ help:
 	@echo "Usage: make -f Makefile.e2e [target]"
 	@echo ""
 	@echo "Full Workflows:"
-	@echo "  all-v2               - Full E2E pipeline with Debezium 2.x"
-	@echo "  all-v3               - Full E2E pipeline with Debezium 3.x"
-	@echo "  all-dual             - Full E2E pipeline with both 2.x and 3.x"
+	@echo "  all                  - Full E2E pipeline"
 	@echo ""
 	@echo "Testing:"
 	@echo "  test                 - Run full test cycle (setup, run, verify, clean)"
@@ -40,8 +38,6 @@ help:
 	@echo "  test-run             - Run CDC tests (insert, update, delete)"
 	@echo "  test-verify          - Verify data in target tables"
 	@echo "  test-clean           - Clean up connectors and tables"
-	@echo "  test-clean-v2        - Clean up Debezium 2.x connectors only"
-	@echo "  test-clean-v3        - Clean up Debezium 3.x connectors only"
 	@echo ""
 	@echo "Database Setup:"
 	@echo "  setup-oracle         - Set up Oracle XE 21c for CDC"
@@ -49,23 +45,15 @@ help:
 	@echo "  setup-postgres       - Set up PostgreSQL target database"
 	@echo ""
 	@echo "Connector Management:"
-	@echo "  register-v2          - Register connectors on Debezium 2.x"
-	@echo "  register-v3          - Register connectors on Debezium 3.x"
-	@echo "  verify-v2            - Verify data via Debezium 2.x"
-	@echo "  verify-v3            - Verify data via Debezium 3.x"
+	@echo "  register             - Register connectors"
+	@echo "  verify               - Verify data"
 
 # =============================================================================
 # Full Workflows (for standalone execution)
 # =============================================================================
 
-all-v2: setup-oracle setup-mariadb register-v2 verify-v2
-	@echo "[OK] Full E2E pipeline with Debezium 2.x completed!"
-
-all-v3: setup-oracle setup-mariadb register-v3 verify-v3
-	@echo "[OK] Full E2E pipeline with Debezium 3.x completed!"
-
-all-dual: setup-oracle setup-mariadb register-v2 verify-v2 register-v3 verify-v3
-	@echo "[OK] Full E2E pipeline with Debezium 2.x and 3.x completed!"
+all: setup-oracle setup-mariadb register verify
+	@echo "[OK] Full E2E pipeline completed!"
 
 # =============================================================================
 # Database Setup
@@ -96,68 +84,45 @@ setup-oracle:
 setup-mariadb:
 	@echo "[INFO] Setting up MariaDB..."
 	kubectl exec $(MARIADB_POD) -- mysql -h $(MARIADB_HOST) -u$(MARIADB_USER) -p$(MARIADB_PASS) -e \
-		"CREATE DATABASE IF NOT EXISTS target_database DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci; DROP TABLE IF EXISTS target_database.target_orders_v2; DROP TABLE IF EXISTS target_database.target_orders_v3;"
+		"CREATE DATABASE IF NOT EXISTS target_database DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci; DROP TABLE IF EXISTS target_database.target_orders;"
 	@echo "[OK] MariaDB setup completed"
 
 setup-postgres:
 	@echo "[INFO] Setting up PostgreSQL..."
 	kubectl exec $(POSTGRES_POD) -n $(NAMESPACE) -- env PGPASSWORD=$(POSTGRES_PASS) psql -U $(POSTGRES_USER) -d $(POSTGRES_DB) -c \
-		"DROP TABLE IF EXISTS target_orders_v2; DROP TABLE IF EXISTS target_orders_v3;"
+		"DROP TABLE IF EXISTS target_orders;"
 	@echo "[OK] PostgreSQL setup completed"
 
 # =============================================================================
 # Connector Registration
 # =============================================================================
 
-register-v2:
-	@echo "[INFO] Registering connectors on Debezium 2.x ($(KAFKA_CONNECT_2X_SVC))..."
-	kubectl cp hack/source-debezium/oracle-free-demo-2x.json $(CURL_POD):/tmp/source-connector-2x.json -n $(NAMESPACE)
+register:
+	@echo "[INFO] Registering connectors on $(KAFKA_CONNECT_SVC)..."
+	kubectl cp hack/source-debezium/oracle-free-demo.json $(CURL_POD):/tmp/source-connector.json -n $(NAMESPACE)
 	kubectl exec $(CURL_POD) -n $(NAMESPACE) -- curl -sf --max-time 10 -X POST \
-		http://$(KAFKA_CONNECT_2X_SVC):8083/connectors \
+		http://$(KAFKA_CONNECT_SVC):8083/connectors \
 		-H "Content-Type: application/json" \
-		-d @/tmp/source-connector-2x.json || echo "[ERROR] Failed to register source connector"
+		-d @/tmp/source-connector.json || echo "[ERROR] Failed to register source connector"
 	@echo "[INFO] Waiting 30s for initial snapshot..."
 	@sleep 30
-	kubectl cp hack/sink-jdbc/cdc_oracle_mariadb-demo-2x.json $(CURL_POD):/tmp/sink-connector-2x.json -n $(NAMESPACE)
+	kubectl cp hack/sink-jdbc/cdc_oracle_mariadb-demo.json $(CURL_POD):/tmp/sink-connector.json -n $(NAMESPACE)
 	kubectl exec $(CURL_POD) -n $(NAMESPACE) -- curl -sf --max-time 10 -X POST \
-		http://$(KAFKA_CONNECT_2X_SVC):8083/connectors \
+		http://$(KAFKA_CONNECT_SVC):8083/connectors \
 		-H "Content-Type: application/json" \
-		-d @/tmp/sink-connector-2x.json || echo "[ERROR] Failed to register sink connector"
+		-d @/tmp/sink-connector.json || echo "[ERROR] Failed to register sink connector"
 	@echo "[INFO] Waiting 10s for sync..."
 	@sleep 10
-	@echo "[OK] Debezium 2.x connectors registered"
-
-register-v3:
-	@echo "[INFO] Registering connectors on Debezium 3.x ($(KAFKA_CONNECT_3X_SVC))..."
-	kubectl cp hack/source-debezium/oracle-free-demo-3x.json $(CURL_POD):/tmp/source-connector-3x.json -n $(NAMESPACE)
-	kubectl exec $(CURL_POD) -n $(NAMESPACE) -- curl -sf --max-time 10 -X POST \
-		http://$(KAFKA_CONNECT_3X_SVC):8083/connectors \
-		-H "Content-Type: application/json" \
-		-d @/tmp/source-connector-3x.json || echo "[ERROR] Failed to register source connector"
-	@echo "[INFO] Waiting 30s for initial snapshot..."
-	@sleep 30
-	kubectl cp hack/sink-jdbc/cdc_oracle_mariadb-demo-3x.json $(CURL_POD):/tmp/sink-connector-3x.json -n $(NAMESPACE)
-	kubectl exec $(CURL_POD) -n $(NAMESPACE) -- curl -sf --max-time 10 -X POST \
-		http://$(KAFKA_CONNECT_3X_SVC):8083/connectors \
-		-H "Content-Type: application/json" \
-		-d @/tmp/sink-connector-3x.json || echo "[ERROR] Failed to register sink connector"
-	@echo "[INFO] Waiting 10s for sync..."
-	@sleep 10
-	@echo "[OK] Debezium 3.x connectors registered"
+	@echo "[OK] Connectors registered"
 
 # =============================================================================
 # Verification
 # =============================================================================
 
-verify-v2:
-	@echo "[INFO] Data in MariaDB target_database.target_orders_v2 (via Debezium 2.x):"
+verify:
+	@echo "[INFO] Data in MariaDB target_database.target_orders:"
 	@kubectl exec $(MARIADB_POD) -- mysql -h $(MARIADB_HOST) -u$(MARIADB_USER) -p$(MARIADB_PASS) -e \
-		"SELECT * FROM target_database.target_orders_v2 ORDER BY ID;" 2>/dev/null || echo "Table not found or empty"
-
-verify-v3:
-	@echo "[INFO] Data in MariaDB target_database.target_orders_v3 (via Debezium 3.x):"
-	@kubectl exec $(MARIADB_POD) -- mysql -h $(MARIADB_HOST) -u$(MARIADB_USER) -p$(MARIADB_PASS) -e \
-		"SELECT * FROM target_database.target_orders_v3 ORDER BY ID;" 2>/dev/null || echo "Table not found or empty"
+		"SELECT * FROM target_database.target_orders ORDER BY ID;" 2>/dev/null || echo "Table not found or empty"
 
 # =============================================================================
 # Testing
@@ -182,29 +147,19 @@ test-run:
 		| kubectl exec -i $(ORACLE_POD) -n $(NAMESPACE) -- sqlplus -S sys/oracle@localhost:1521/$(ORACLE_PDB) as sysdba
 	@echo "[INFO] Waiting 5s for replication..." && sleep 5
 
-test-verify: verify-v2 verify-v3
+test-verify: verify
 
-test-clean: test-clean-v2 test-clean-v3
+test-clean:
+	@echo "[INFO] Deleting connectors..."
+	-kubectl exec $(CURL_POD) -n $(NAMESPACE) -- curl -s -X DELETE \
+		http://$(KAFKA_CONNECT_SVC):8083/connectors/source_cdc_oracle_demo
+	-kubectl exec $(CURL_POD) -n $(NAMESPACE) -- curl -s -X DELETE \
+		http://$(KAFKA_CONNECT_SVC):8083/connectors/sink_cdc_oracle_to_mariadb
+	@echo "[OK] Connectors deleted"
 	@echo "[INFO] Dropping Oracle source table..."
 	@echo "ALTER SESSION SET CONTAINER=$(ORACLE_PDB); DROP TABLE DEMO.SOURCE_ORDERS; EXIT;" \
 		| kubectl exec -i $(ORACLE_POD) -n $(NAMESPACE) -- sqlplus -S sys/oracle@localhost:1521/$(ORACLE_SID) as sysdba
 	@echo "[INFO] Dropping MariaDB target tables..."
 	-kubectl exec $(MARIADB_POD) -n $(NAMESPACE) -- mysql -h $(MARIADB_HOST) -u$(MARIADB_USER) -p$(MARIADB_PASS) \
-		-e "DROP TABLE IF EXISTS target_database.target_orders_v2; DROP TABLE IF EXISTS target_database.target_orders_v3;"
+		-e "DROP TABLE IF EXISTS target_database.target_orders;"
 	@echo "[OK] Reset completed"
-
-test-clean-v2:
-	@echo "[INFO] Deleting Debezium 2.x connectors..."
-	-kubectl exec $(CURL_POD) -n $(NAMESPACE) -- curl -s -X DELETE \
-		http://$(KAFKA_CONNECT_2X_SVC):8083/connectors/source_cdc_oracle_demo_v2
-	-kubectl exec $(CURL_POD) -n $(NAMESPACE) -- curl -s -X DELETE \
-		http://$(KAFKA_CONNECT_2X_SVC):8083/connectors/sink_cdc_oracle_to_mariadb_v2
-	@echo "[OK] Debezium 2.x connectors deleted"
-
-test-clean-v3:
-	@echo "[INFO] Deleting Debezium 3.x connectors..."
-	-kubectl exec $(CURL_POD) -n $(NAMESPACE) -- curl -s -X DELETE \
-		http://$(KAFKA_CONNECT_3X_SVC):8083/connectors/source_cdc_oracle_demo_v3
-	-kubectl exec $(CURL_POD) -n $(NAMESPACE) -- curl -s -X DELETE \
-		http://$(KAFKA_CONNECT_3X_SVC):8083/connectors/sink_cdc_oracle_to_mariadb_v3
-	@echo "[OK] Debezium 3.x connectors deleted"

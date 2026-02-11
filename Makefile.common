@@ -15,7 +15,7 @@ include Makefile.param
 
 .PHONY: help base-infra-up clean .check-tools .tools \
 	setup-oracle setup-mariadb setup-postgres \
-	logs-v2 logs-v3 status-v2 status-v3 port-forward
+	logs status port-forward
 
 # =============================================================================
 # Help
@@ -36,22 +36,19 @@ help:
 	@echo "  setup-postgres       - Set up PostgreSQL target database"
 	@echo ""
 	@echo "Utilities:"
-	@echo "  logs-v2              - View logs of Debezium 2.x Kafka Connect"
-	@echo "  logs-v3              - View logs of Debezium 3.x Kafka Connect"
-	@echo "  status-v2            - Check connector status on Debezium 2.x"
-	@echo "  status-v3            - Check connector status on Debezium 3.x"
+	@echo "  logs                 - View logs of Kafka Connect"
+	@echo "  status               - Check connector status"
 	@echo "  port-forward         - Set up port forwarding"
 	@echo ""
-	@echo "Dual Kafka Connect Services:"
-	@echo "  Debezium 2.x: $(KAFKA_CONNECT_2X_SVC):8083"
-	@echo "  Debezium 3.x: $(KAFKA_CONNECT_3X_SVC):8083"
+	@echo "Kafka Connect Service:"
+	@echo "  Debezium: $(KAFKA_CONNECT_SVC):8083"
 
 # =============================================================================
 # Infrastructure Management
 # =============================================================================
 
 base-infra-up: .check-tools
-	@echo "Creating Kind cluster and deploying services (dual Kafka Connect)..."
+	@echo "Creating Kind cluster and deploying services..."
 	@if kind get clusters 2>/dev/null | grep -q "^$(CLUSTER_NAME)$$"; then \
 		echo "Cluster '$(CLUSTER_NAME)' already exists"; \
 	else \
@@ -82,7 +79,7 @@ base-infra-up: .check-tools
 	kubectl apply -f deployment/oracle/oracle-free.yaml -n $(NAMESPACE)
 	helm dependency build deployment/curl-client
 	helm upgrade --install dbrep-curl-client deployment/curl-client -f deployment/curl-client/values.yaml -n $(NAMESPACE)
-	@echo "[OK] All services deployed (Debezium 2.x + 3.x)"
+	@echo "[OK] All services deployed"
 	@echo "[INFO] Waiting for pods to be ready..."
 	kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=kafka --timeout=300s -n $(NAMESPACE)
 	kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=mariadb --timeout=300s -n $(NAMESPACE)
@@ -102,8 +99,6 @@ clean:
 	-helm uninstall dbrep-mariadb -n $(NAMESPACE) || true
 	-helm uninstall dbrep-postgres -n $(NAMESPACE) || true
 	-helm uninstall dbrep-redpanda-console -n $(NAMESPACE) || true
-	-helm uninstall dbrep-kafka-connect-ui -n $(NAMESPACE) || true
-	-helm uninstall dbrep-kafka-connect -n $(NAMESPACE) || true
 	-helm uninstall dbrep-kafka-connect-v3 -n $(NAMESPACE) || true
 	-helm uninstall dbrep-kafka -n $(NAMESPACE) || true
 	-helm uninstall dbrep-curl-client -n $(NAMESPACE) || true
@@ -172,46 +167,33 @@ setup-oracle:
 setup-mariadb:
 	@echo "[INFO] Setting up MariaDB..."
 	kubectl exec $(MARIADB_POD) -- mysql -h $(MARIADB_HOST) -u$(MARIADB_USER) -p$(MARIADB_PASS) -e \
-		"CREATE DATABASE IF NOT EXISTS target_database DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci; DROP TABLE IF EXISTS target_database.target_orders_v2; DROP TABLE IF EXISTS target_database.target_orders_v3;"
+		"CREATE DATABASE IF NOT EXISTS target_database DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci; DROP TABLE IF EXISTS target_database.target_orders;"
 	@echo "[OK] MariaDB setup completed"
 
 setup-postgres:
 	@echo "[INFO] Setting up PostgreSQL..."
 	kubectl exec $(POSTGRES_POD) -n $(NAMESPACE) -- env PGPASSWORD=$(POSTGRES_PASS) psql -U $(POSTGRES_USER) -d $(POSTGRES_DB) -c \
-		"DROP TABLE IF EXISTS target_orders_v2; DROP TABLE IF EXISTS target_orders_v3;"
+		"DROP TABLE IF EXISTS target_orders;"
 	@echo "[OK] PostgreSQL setup completed"
 
 # =============================================================================
 # Utilities
 # =============================================================================
 
-logs-v2:
-	@echo "Viewing Kafka Connect logs (Debezium 2.x)..."
-	kubectl logs -f deployment/$(KAFKA_CONNECT_2X_SVC) --tail=100 -n $(NAMESPACE)
+logs:
+	@echo "Viewing Kafka Connect logs..."
+	kubectl logs -f deployment/$(KAFKA_CONNECT_SVC) --tail=100 -n $(NAMESPACE)
 
-logs-v3:
-	@echo "Viewing Kafka Connect logs (Debezium 3.x)..."
-	kubectl logs -f deployment/$(KAFKA_CONNECT_3X_SVC) --tail=100 -n $(NAMESPACE)
-
-status-v2:
-	@echo "[INFO] Checking connector status on Debezium 2.x..."
-	@kubectl exec $(CURL_POD) -n $(NAMESPACE) -- curl -s http://$(KAFKA_CONNECT_2X_SVC):8083/connectors | jq .
-	@kubectl exec $(CURL_POD) -n $(NAMESPACE) -- curl -s "http://$(KAFKA_CONNECT_2X_SVC):8083/connectors?expand=status" | jq .
-
-status-v3:
-	@echo "[INFO] Checking connector status on Debezium 3.x..."
-	@kubectl exec $(CURL_POD) -n $(NAMESPACE) -- curl -s http://$(KAFKA_CONNECT_3X_SVC):8083/connectors | jq .
-	@kubectl exec $(CURL_POD) -n $(NAMESPACE) -- curl -s "http://$(KAFKA_CONNECT_3X_SVC):8083/connectors?expand=status" | jq .
+status:
+	@echo "[INFO] Checking connector status..."
+	@kubectl exec $(CURL_POD) -n $(NAMESPACE) -- curl -s http://$(KAFKA_CONNECT_SVC):8083/connectors | jq .
+	@kubectl exec $(CURL_POD) -n $(NAMESPACE) -- curl -s "http://$(KAFKA_CONNECT_SVC):8083/connectors?expand=status" | jq .
 
 port-forward:
 	@echo "Setting up port forwarding..."
-	@echo "Kafka Connect UI: http://localhost:8000"
 	@echo "Redpanda Console: http://localhost:8080"
-	@echo "Kafka Connect 2.x API: http://localhost:8083"
-	@echo "Kafka Connect 3.x API: http://localhost:8084"
-	kubectl port-forward svc/dbrep-kafka-connect-ui 8000:80 -n $(NAMESPACE) &
+	@echo "Kafka Connect API: http://localhost:8083"
 	kubectl port-forward svc/dbrep-redpanda-console 8080:8080 -n $(NAMESPACE) &
-	kubectl port-forward svc/$(KAFKA_CONNECT_2X_SVC) 8083:8083 -n $(NAMESPACE) &
-	kubectl port-forward svc/$(KAFKA_CONNECT_3X_SVC) 8084:8083 -n $(NAMESPACE) &
+	kubectl port-forward svc/$(KAFKA_CONNECT_SVC) 8083:8083 -n $(NAMESPACE) &
 	@echo "[INFO] Port forwarding started in background. Press Ctrl+C to stop all."
 	wait

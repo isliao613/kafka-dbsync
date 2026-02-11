@@ -16,15 +16,12 @@ CLUSTER_NAME ?= kafka-dbsync
 ORACLE_SID ?= XE
 ORACLE_PDB ?= XEPDB1
 
-# Kafka Connect images
-KAFKA_CONNECT_2X_IMAGE ?= kafka-dbsync/cp-kafka-connect-debezium
-KAFKA_CONNECT_2X_IMAGE_TAG ?= 2.x
-KAFKA_CONNECT_3X_IMAGE ?= kafka-dbsync/cp-kafka-connect-debezium
-KAFKA_CONNECT_3X_IMAGE_TAG ?= 3.4.0
+# Kafka Connect image
+KAFKA_CONNECT_IMAGE ?= kafka-dbsync/cp-kafka-connect-debezium
+KAFKA_CONNECT_IMAGE_TAG ?= 3.4.0
 
-# Kafka Connect services
-KAFKA_CONNECT_2X_SVC ?= dbrep-kafka-connect-cp-kafka-connect
-KAFKA_CONNECT_3X_SVC ?= dbrep-kafka-connect-v3-cp-kafka-connect
+# Kafka Connect service
+KAFKA_CONNECT_SVC ?= dbrep-kafka-connect-v3-cp-kafka-connect
 
 # MariaDB configuration
 MARIADB_POD ?= dbrep-mariadb-0
