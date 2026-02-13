@@ -18,7 +18,7 @@ ORACLE_PDB ?= XEPDB1
 
 # Kafka Connect image
 KAFKA_CONNECT_IMAGE ?= kafka-dbsync/cp-kafka-connect-debezium
-KAFKA_CONNECT_IMAGE_TAG ?= 3.4.0
+KAFKA_CONNECT_IMAGE_TAG ?= 3.4.1
 
 # Kafka Connect service
 KAFKA_CONNECT_SVC ?= dbrep-kafka-connect-v3-cp-kafka-connect
