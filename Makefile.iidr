@@ -1,12 +1,13 @@
 # Makefile.iidr
 #
 # IIDR CDC Sink Connector testing.
-# Tests the custom IIDR CDC sink connector with MariaDB and PostgreSQL targets.
+# Tests the custom IIDR CDC sink connector with MariaDB, PostgreSQL and YugabyteDB targets.
 # Can be run independently: make -f Makefile.iidr <target>
 #
 # Prerequisites:
 #   - Infrastructure deployed (make -f Makefile.common base-infra-up)
 #   - Kafka Connect image built (make -f Makefile.docker build)
+#   - YugabyteDB deployed (helm install yugabyte yugabytedb/yugabyte)
 #
 # ==============================================================================
 
@@ -27,16 +28,20 @@ IIDR_CONNECTOR_PG_CORRUPT := iidr_cdc_sink_pg_corrupt_test
 # JDBC Sink connector names (SMT-based approach)
 IIDR_JDBC_CONNECTOR_MARIADB := iidr_jdbc_sink_test
 IIDR_JDBC_CONNECTOR_PG := iidr_jdbc_sink_pg_test
+IIDR_JDBC_CONNECTOR_YB := iidr_jdbc_sink_yb_test
+
+# YugabyteDB helper
+YB_POD := yb-tserver-0
 
 # =============================================================================
 # Phony Targets
 # =============================================================================
 
 .PHONY: help all \
-	setup setup-mariadb setup-postgres \
+	setup setup-mariadb setup-postgres setup-yugabyte \
 	register register-pg register-corrupt \
-	register-jdbc register-jdbc-pg \
-	run verify status clean
+	register-jdbc register-jdbc-pg register-jdbc-yb \
+	run verify verify-yb status clean
 
 # =============================================================================
 # Help
@@ -46,12 +51,13 @@ help:
 	@echo "Usage: make -f Makefile.iidr [target]"
 	@echo ""
 	@echo "Full Workflows:"
-	@echo "  all                  - Full IIDR CDC sink test"
+	@echo "  all                  - Full IIDR CDC sink test (MariaDB, PG, YB)"
 	@echo ""
 	@echo "Setup:"
 	@echo "  setup                - Set up Kafka topic and databases"
 	@echo "  setup-mariadb        - Set up MariaDB target tables"
 	@echo "  setup-postgres       - Set up PostgreSQL target tables"
+	@echo "  setup-yugabyte       - Set up YugabyteDB target tables"
 	@echo ""
 	@echo "Connector Registration (MariaDB):"
 	@echo "  register             - Register IIDR sink connector"
@@ -62,10 +68,11 @@ help:
 	@echo "JDBC Sink Connector Registration (SMT-based):"
 	@echo "  register-jdbc        - Register IIDR JDBC sink (MariaDB)"
 	@echo "  register-jdbc-pg     - Register IIDR JDBC sink (PostgreSQL)"
+	@echo "  register-jdbc-yb     - Register IIDR JDBC sink (YugabyteDB)"
 	@echo ""
 	@echo "Testing:"
 	@echo "  run                  - Produce test IIDR CDC events to Kafka"
-	@echo "  verify               - Verify data in MariaDB and PostgreSQL"
+	@echo "  verify               - Verify data in all target databases"
 	@echo "  status               - Check connector status"
 	@echo "  clean                - Clean up connectors and tables"
 
@@ -73,14 +80,14 @@ help:
 # Full Workflows
 # =============================================================================
 
-all: setup register-jdbc register-jdbc-pg run verify
+all: setup register-jdbc register-jdbc-pg register-jdbc-yb run verify
 	@echo "[OK] Full IIDR CDC sink test completed!"
 
 # =============================================================================
 # Setup
 # =============================================================================
 
-setup: setup-mariadb setup-postgres
+setup: setup-mariadb setup-postgres setup-yugabyte
 	@echo "[INFO] Setting up IIDR CDC sink test environment..."
 	@echo "[INFO] Creating Kafka topic: $(IIDR_TOPIC)..."
 	-kubectl exec $(KAFKA_POD) -n $(NAMESPACE) -- kafka-topics.sh \
@@ -159,6 +166,23 @@ setup-postgres:
 		  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP \
 		);"
 	@echo "[OK] PostgreSQL setup completed"
+
+setup-yugabyte:
+	@echo "[INFO] Setting up YugabyteDB tables..."
+	-kubectl exec $(YB_POD) -n $(NAMESPACE) -- /home/yugabyte/bin/ysqlsh -h localhost -c "DROP TABLE IF EXISTS test_orders;"
+	@echo "[INFO] Creating YugabyteDB target tables..."
+	kubectl exec $(YB_POD) -n $(NAMESPACE) -- /home/yugabyte/bin/ysqlsh -h localhost -c \
+		"CREATE TABLE test_orders ( \
+		  id BIGINT PRIMARY KEY, \
+		  order_name VARCHAR(255), \
+		  amount DOUBLE PRECISION, \
+		  status VARCHAR(255), \
+		  created_at TIMESTAMP, \
+		  updated_at TIMESTAMPTZ, \
+		  order_date DATE, \
+		  order_time TIME \
+		);"
+	@echo "[OK] YugabyteDB setup completed"
 
 # =============================================================================
 # Connector Registration (MariaDB)
@@ -250,11 +274,20 @@ register-jdbc:
 	@echo "[INFO] Registering IIDR JDBC sink connector (MariaDB)..."
 	kubectl cp hack/sink-jdbc/iidr_jdbc_sink-test.json $(CURL_POD):/tmp/iidr_jdbc_sink-test.json -n $(NAMESPACE)
 	@kubectl exec $(CURL_POD) -n $(NAMESPACE) -- sh -c '\
+		echo "[INFO] Waiting for Kafka Connect API to be ready..."; \
+		for i in $$(seq 1 30); do \
+			if curl -sf http://$(KAFKA_CONNECT_SVC):8083/connectors >/dev/null; then \
+				echo "[OK] Kafka Connect API is ready"; \
+				break; \
+			fi; \
+			echo "...waiting ($$i/30)"; \
+			sleep 5; \
+		done; \
 		if curl -sf -o /dev/null --max-time 10 \
 			http://$(KAFKA_CONNECT_SVC):8083/connectors/$(IIDR_JDBC_CONNECTOR_MARIADB) 2>/dev/null; then \
 			echo "[SKIP] Connector $(IIDR_JDBC_CONNECTOR_MARIADB) already exists."; \
 		else \
-			curl -sf --max-time 10 -X POST \
+			curl -sf --max-time 20 -X POST \
 				http://$(KAFKA_CONNECT_SVC):8083/connectors \
 				-H "Content-Type: application/json" \
 				-d @/tmp/iidr_jdbc_sink-test.json || { echo "[ERROR] Failed to register connector"; exit 1; }; \
@@ -272,12 +305,30 @@ register-jdbc-pg:
 			http://$(KAFKA_CONNECT_SVC):8083/connectors/$(IIDR_JDBC_CONNECTOR_PG) 2>/dev/null; then \
 			echo "[SKIP] Connector $(IIDR_JDBC_CONNECTOR_PG) already exists."; \
 		else \
-			curl -sf --max-time 10 -X POST \
+			curl -sf --max-time 20 -X POST \
 				http://$(KAFKA_CONNECT_SVC):8083/connectors \
 				-H "Content-Type: application/json" \
 				-d @/tmp/iidr_jdbc_sink-pg-test.json || { echo "[ERROR] Failed to register connector"; exit 1; }; \
 			echo; \
 			echo "[OK] IIDR JDBC sink connector (PostgreSQL) registered"; \
+			echo "[INFO] Waiting 5s for connector to start..."; \
+			sleep 5; \
+		fi'
+
+register-jdbc-yb:
+	@echo "[INFO] Registering IIDR JDBC sink connector (YugabyteDB)..."
+	kubectl cp hack/sink-jdbc/iidr_jdbc_sink-yb-test.json $(CURL_POD):/tmp/iidr_jdbc_sink-yb-test.json -n $(NAMESPACE)
+	@kubectl exec $(CURL_POD) -n $(NAMESPACE) -- sh -c '\
+		if curl -sf -o /dev/null --max-time 10 \
+			http://$(KAFKA_CONNECT_SVC):8083/connectors/$(IIDR_JDBC_CONNECTOR_YB) 2>/dev/null; then \
+			echo "[SKIP] Connector $(IIDR_JDBC_CONNECTOR_YB) already exists."; \
+		else \
+			curl -sf --max-time 20 -X POST \
+				http://$(KAFKA_CONNECT_SVC):8083/connectors \
+				-H "Content-Type: application/json" \
+				-d @/tmp/iidr_jdbc_sink-yb-test.json || { echo "[ERROR] Failed to register connector"; exit 1; }; \
+			echo; \
+			echo "[OK] IIDR JDBC sink connector (YugabyteDB) registered"; \
 			echo "[INFO] Waiting 5s for connector to start..."; \
 			sleep 5; \
 		fi'
@@ -300,26 +351,25 @@ run:
 	@sleep 10
 	@echo "[OK] Test events produced"
 
-verify:
-	@echo "[INFO] Verifying IIDR CDC sink test results..."
-	@echo ""
+verify: verify-mariadb verify-postgres verify-yugabyte
+
+verify-mariadb:
 	@echo "=== MariaDB Results ==="
 	@echo "[INFO] MariaDB - TEST_ORDERS:"
 	@kubectl exec $(MARIADB_POD) -n $(NAMESPACE) -- mysql -h $(MARIADB_HOST) -u$(MARIADB_USER) -p$(MARIADB_PASS) -e \
 		"SELECT * FROM target_database.TEST_ORDERS ORDER BY ID;" 2>/dev/null || echo "Table not found or empty"
-	@echo ""
-	@echo "[INFO] MariaDB - streaming_corrupt_events:"
-	@kubectl exec $(MARIADB_POD) -n $(NAMESPACE) -- mysql -h $(MARIADB_HOST) -u$(MARIADB_USER) -p$(MARIADB_PASS) -e \
-		"SELECT id, topic, kafka_partition, kafka_offset, error_reason, table_name, entry_type, created_at FROM target_database.streaming_corrupt_events ORDER BY id;" 2>/dev/null || echo "Table not found or empty"
-	@echo ""
+
+verify-postgres:
 	@echo "=== PostgreSQL Results ==="
 	@echo "[INFO] PostgreSQL - test_orders:"
 	@kubectl exec $(POSTGRES_POD) -n $(NAMESPACE) -- env PGPASSWORD=$(POSTGRES_PASS) psql -U $(POSTGRES_USER) -d $(POSTGRES_DB) -c \
 		"SELECT * FROM test_orders ORDER BY id;" 2>/dev/null || echo "Table not found or empty"
-	@echo ""
-	@echo "[INFO] PostgreSQL - streaming_corrupt_events:"
-	@kubectl exec $(POSTGRES_POD) -n $(NAMESPACE) -- env PGPASSWORD=$(POSTGRES_PASS) psql -U $(POSTGRES_USER) -d $(POSTGRES_DB) -c \
-		"SELECT id, topic, kafka_partition, kafka_offset, error_reason, table_name, entry_type, created_at FROM streaming_corrupt_events ORDER BY id;" 2>/dev/null || echo "Table not found or empty"
+
+verify-yugabyte:
+	@echo "=== YugabyteDB Results ==="
+	@echo "[INFO] YugabyteDB - test_orders:"
+	@kubectl exec $(YB_POD) -n $(NAMESPACE) -- /home/yugabyte/bin/ysqlsh -h localhost -c \
+		"SELECT * FROM test_orders ORDER BY id;" 2>/dev/null || echo "Table not found or empty"
 
 # =============================================================================
 # Status
@@ -328,9 +378,11 @@ verify:
 status:
 	@echo "[INFO] Checking IIDR sink connector status..."
 	@echo "MariaDB connector:"
-	@kubectl exec $(CURL_POD) -n $(NAMESPACE) -- curl -s http://$(KAFKA_CONNECT_SVC):8083/connectors/$(IIDR_CONNECTOR_MARIADB)/status | jq .
+	@kubectl exec $(CURL_POD) -n $(NAMESPACE) -- curl -s http://$(KAFKA_CONNECT_SVC):8083/connectors/$(IIDR_JDBC_CONNECTOR_MARIADB)/status | jq .
 	@echo "PostgreSQL connector:"
-	@kubectl exec $(CURL_POD) -n $(NAMESPACE) -- curl -s http://$(KAFKA_CONNECT_SVC):8083/connectors/$(IIDR_CONNECTOR_PG)/status | jq .
+	@kubectl exec $(CURL_POD) -n $(NAMESPACE) -- curl -s http://$(KAFKA_CONNECT_SVC):8083/connectors/$(IIDR_JDBC_CONNECTOR_PG)/status | jq .
+	@echo "YugabyteDB connector:"
+	@kubectl exec $(CURL_POD) -n $(NAMESPACE) -- curl -s http://$(KAFKA_CONNECT_SVC):8083/connectors/$(IIDR_JDBC_CONNECTOR_YB)/status | jq .
 
 # =============================================================================
 # Cleanup
@@ -343,17 +395,16 @@ clean:
 	-kubectl exec $(CURL_POD) -n $(NAMESPACE) -- curl -s -X DELETE \
 		http://$(KAFKA_CONNECT_SVC):8083/connectors/$(IIDR_CONNECTOR_PG)
 	-kubectl exec $(CURL_POD) -n $(NAMESPACE) -- curl -s -X DELETE \
-		http://$(KAFKA_CONNECT_SVC):8083/connectors/$(IIDR_CONNECTOR_CORRUPT)
-	-kubectl exec $(CURL_POD) -n $(NAMESPACE) -- curl -s -X DELETE \
-		http://$(KAFKA_CONNECT_SVC):8083/connectors/$(IIDR_CONNECTOR_PG_CORRUPT)
-	-kubectl exec $(CURL_POD) -n $(NAMESPACE) -- curl -s -X DELETE \
 		http://$(KAFKA_CONNECT_SVC):8083/connectors/$(IIDR_JDBC_CONNECTOR_MARIADB)
 	-kubectl exec $(CURL_POD) -n $(NAMESPACE) -- curl -s -X DELETE \
 		http://$(KAFKA_CONNECT_SVC):8083/connectors/$(IIDR_JDBC_CONNECTOR_PG)
+	-kubectl exec $(CURL_POD) -n $(NAMESPACE) -- curl -s -X DELETE \
+		http://$(KAFKA_CONNECT_SVC):8083/connectors/$(IIDR_JDBC_CONNECTOR_YB)
 	-kubectl exec $(MARIADB_POD) -n $(NAMESPACE) -- mysql -h $(MARIADB_HOST) -u$(MARIADB_USER) -p$(MARIADB_PASS) -e \
 		"DROP TABLE IF EXISTS target_database.TEST_ORDERS; DROP TABLE IF EXISTS target_database.streaming_corrupt_events;"
 	-kubectl exec $(POSTGRES_POD) -n $(NAMESPACE) -- env PGPASSWORD=$(POSTGRES_PASS) psql -U $(POSTGRES_USER) -d $(POSTGRES_DB) -c \
 		"DROP TABLE IF EXISTS test_orders; DROP TABLE IF EXISTS streaming_corrupt_events;"
+	-kubectl exec $(YB_POD) -n $(NAMESPACE) -- /home/yugabyte/bin/ysqlsh -h localhost -c "DROP TABLE IF EXISTS test_orders;"
 	-kubectl exec $(KAFKA_POD) -n $(NAMESPACE) -- kafka-topics.sh \
 		--bootstrap-server localhost:9092 \
 		--delete --topic $(IIDR_TOPIC) 2>/dev/null || true

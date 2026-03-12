@@ -52,6 +52,12 @@
             <artifactId>mssql-jdbc</artifactId>
             <version>12.10.2.jre11</version>
         </dependency>
+        <!-- YugabyteDB -->
+        <dependency>
+            <groupId>com.yugabyte</groupId>
+            <artifactId>jdbc-yugabytedb</artifactId>
+            <version>42.7.3-yb-4</version>
+        </dependency>
         <!-- Oracle -->
         <dependency>
             <groupId>com.oracle.database.jdbc</groupId>
