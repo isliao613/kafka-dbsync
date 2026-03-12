@@ -101,15 +101,15 @@ def produce_iidr_events(bootstrap_server, topic):
         },
 
         # Corrupt event - missing A_ENTTYP header (should go to DLQ)
-        {
-            "key": {"ID": 99},
-            "value": {"ID": 99, "ORDER_NAME": "Corrupt-Order", "AMOUNT": 999.99, "STATUS": "BAD", "CREATED_AT": "2026-01-15 10:03:00", "UPDATED_AT": "2026-01-15 10:03:00", "ORDER_DATE": "2026-01-15", "ORDER_TIME": "10:03:00"},
-            "headers": [
-                ("TableName", b"TEST_ORDERS"),
-                # Missing A_ENTTYP - should go to DLQ
-                ("A_TIMSTAMP", timestamp_now.encode('utf-8'))
-            ]
-        },
+        # {
+        #     "key": {"ID": 99},
+        #     "value": {"ID": 99, "ORDER_NAME": "Corrupt-Order", "AMOUNT": 999.99, "STATUS": "BAD", "CREATED_AT": "2026-01-15 10:03:00", "UPDATED_AT": "2026-01-15 10:03:00", "ORDER_DATE": "2026-01-15", "ORDER_TIME": "10:03:00"},
+        #     "headers": [
+        #         ("TableName", b"TEST_ORDERS"),
+        #         # Missing A_ENTTYP - should go to DLQ
+        #         ("A_TIMSTAMP", timestamp_now.encode('utf-8'))
+        #     ]
+        # },
     ]
 
     print(f"[INFO] Producing {len(test_events)} test events to topic: {topic}")

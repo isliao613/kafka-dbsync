@@ -81,6 +81,8 @@ RUN wget https://github.com/ClickHouse/clickhouse-java/releases/download/v0.4.6/
 RUN wget --no-check-certificate https://download.microsoft.com/download/aef8c909-5763-4b89-84e5-851b59eb082b/sqljdbc_12.10.2.0_enu.tar.gz
 RUN tar zxvf sqljdbc_12.10.2.0_enu.tar.gz -C /usr/share/confluent-hub-components/confluentinc-kafka-connect-jdbc/lib
 RUN mv /usr/share/confluent-hub-components/confluentinc-kafka-connect-jdbc/lib/sqljdbc_12.10/enu/jars/* /usr/share/confluent-hub-components/confluentinc-kafka-connect-jdbc/lib/
+## yugabyte
+RUN wget https://repo1.maven.org/maven2/com/yugabyte/jdbc-yugabytedb/42.7.3-yb-4/jdbc-yugabytedb-42.7.3-yb-4.jar -P /usr/share/confluent-hub-components/confluentinc-kafka-connect-jdbc/lib/
 
 # Install JMX agent
 # ref: https://github.com/debezium/debezium-examples/blob/main/monitoring/debezium-jmx-exporter/Dockerfile
@@ -103,4 +105,5 @@ COPY --from=sink-builder /build/target/iidr-cdc-sink-connector-1.0.0.jar /usr/sh
 RUN cp /usr/share/confluent-hub-components/confluentinc-kafka-connect-jdbc/lib/mariadb-java-client-*.jar /usr/share/java/iidr-cdc-sink-connector/ && \
     cp /usr/share/confluent-hub-components/confluentinc-kafka-connect-jdbc/lib/mysql-connector-j-8.0.32/mysql-connector-j-8.0.32.jar /usr/share/java/iidr-cdc-sink-connector/ && \
     cp /usr/share/confluent-hub-components/confluentinc-kafka-connect-jdbc/lib/postgresql-*.jar /usr/share/java/iidr-cdc-sink-connector/ && \
+    cp /usr/share/confluent-hub-components/confluentinc-kafka-connect-jdbc/lib/jdbc-yugabytedb-*.jar /usr/share/java/iidr-cdc-sink-connector/ && \
     cp /usr/share/confluent-hub-components/confluentinc-kafka-connect-jdbc/lib/mssql-jdbc-*.jar /usr/share/java/iidr-cdc-sink-connector/ 2>/dev/null || true

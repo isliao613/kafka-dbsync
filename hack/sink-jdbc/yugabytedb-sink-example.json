@@ -1,0 +1,16 @@
+{
+  "name": "yugabytedb-sink",
+  "config": {
+    "connector.class": "io.confluent.connect.jdbc.JdbcSinkConnector",
+    "tasks.max": "1",
+    "topics": "cdc_oracle.DEMO.SOURCE_ORDERS",
+    "connection.url": "jdbc:yugabytedb://yugabytedb-host:5433/yugabyte?load-balance=true",
+    "connection.user": "yugabyte",
+    "connection.password": "yugabyte",
+    "auto.create": "true",
+    "auto.evolve": "true",
+    "insert.mode": "upsert",
+    "pk.mode": "record_key",
+    "pk.fields": "ID"
+  }
+}
