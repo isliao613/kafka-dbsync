@@ -117,40 +117,58 @@ public class LegacyCharsetTransform<R extends ConnectRecord<R>> implements Trans
 
     @Override
     public R apply(R record) {
-        if (record.value() == null) {
-            return record;
-        }
-
         // Check table filter first
         if (!matchesTables(record.topic())) {
             return record;
         }
 
-        if (!(record.value() instanceof Struct)) {
-            return record;
-        }
-
-        Struct value = (Struct) record.value();
-
-        // Handle Debezium envelope (before/after)
-        Struct after = value.schema().field("after") != null ? value.getStruct("after") : null;
-        Struct before = value.schema().field("before") != null ? value.getStruct("before") : null;
-
         boolean modified = false;
-        Struct newAfter = null;
-        Struct newBefore = null;
 
-        if (after != null) {
-            newAfter = processStruct(after);
-            if (newAfter != after) {
+        // 1. Process Key (Debezium keys are flat Structs)
+        Object key = record.key();
+        if (key instanceof Struct) {
+            Object newKey = processStruct((Struct) key);
+            if (newKey != key) {
+                key = newKey;
                 modified = true;
             }
         }
 
-        if (before != null) {
-            newBefore = processStruct(before);
-            if (newBefore != before) {
-                modified = true;
+        // 2. Process Value (Debezium values are envelopes)
+        Object value = record.value();
+        Object newValue = value;
+
+        if (value instanceof Struct) {
+            Struct structValue = (Struct) value;
+            Schema schema = structValue.schema();
+            
+            Field afterField = schema.field("after");
+            Field beforeField = schema.field("before");
+            
+            // Only process if it's a Debezium envelope
+            if ((afterField != null && afterField.schema().type() == Schema.Type.STRUCT)
+             || (beforeField != null && beforeField.schema().type() == Schema.Type.STRUCT)) {
+
+                Struct after = (afterField != null) ? structValue.getStruct("after") : null;
+                Struct before = (beforeField != null) ? structValue.getStruct("before") : null;
+
+                Struct newAfter = (after != null) ? processStruct(after) : null;
+                Struct newBefore = (before != null) ? processStruct(before) : null;
+
+                if (newAfter != after || newBefore != before) {
+                    Struct newStructValue = new Struct(schema);
+                    for (Field field : schema.fields()) {
+                        if (field.name().equals("after")) {
+                            newStructValue.put(field, newAfter);
+                        } else if (field.name().equals("before")) {
+                            newStructValue.put(field, newBefore);
+                        } else {
+                            newStructValue.put(field, structValue.get(field));
+                        }
+                    }
+                    newValue = newStructValue;
+                    modified = true;
+                }
             }
         }
 
@@ -158,24 +176,12 @@ public class LegacyCharsetTransform<R extends ConnectRecord<R>> implements Trans
             return record;
         }
 
-        // Build new value with modified after/before
-        Struct newValue = new Struct(value.schema());
-        for (Field field : value.schema().fields()) {
-            if (field.name().equals("after") && newAfter != null) {
-                newValue.put(field, newAfter);
-            } else if (field.name().equals("before") && newBefore != null) {
-                newValue.put(field, newBefore);
-            } else {
-                newValue.put(field, value.get(field));
-            }
-        }
-
         return record.newRecord(
                 record.topic(),
                 record.kafkaPartition(),
                 record.keySchema(),
-                record.key(),
-                newValue.schema(),
+                key,
+                record.valueSchema(),
                 newValue,
                 record.timestamp()
         );
