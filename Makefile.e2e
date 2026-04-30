@@ -52,7 +52,7 @@ help:
 # Full Workflows (for standalone execution)
 # =============================================================================
 
-all: setup-oracle setup-mariadb register verify
+all: setup-oracle setup-mariadb register test-run verify
 	@echo "[OK] Full E2E pipeline completed!"
 
 # =============================================================================
