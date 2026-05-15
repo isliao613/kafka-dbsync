@@ -42,6 +42,7 @@ build:
 	-kubectl rollout restart deployment/$(KAFKA_CONNECT_SVC) -n $(NAMESPACE) 2>/dev/null || true
 	@echo "[OK] Debezium image built and loaded"
 	@echo "[INFO] Deploying Kafka Connect..."
+	helm dependency build deployment/kafka-connect
 	helm upgrade --install dbrep-kafka-connect-v3 deployment/kafka-connect \
 		-f deployment/kafka-connect/values.yaml \
 		--set cp-kafka-connect.image=$(KAFKA_CONNECT_IMAGE) \
