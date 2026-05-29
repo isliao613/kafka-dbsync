@@ -1,0 +1,10 @@
+apiVersion: v2
+name: akhq
+description: Helm chart for AKHQ - Kafka Web UI
+version: 0.1.0
+appVersion: "0.25.0"
+keywords:
+  - kafka
+  - akhq
+  - ui
+home: "https://akhq.io/"

@@ -1,0 +1,21 @@
+akhq:
+  replicaCount: 1
+
+  image:
+    repository: tchiotludo/akhq
+    tag: 0.27.1
+    pullPolicy: IfNotPresent
+
+  service:
+    type: ClusterIP
+    port: 8080
+
+  configuration:
+    akhq:
+      connections:
+        docker-kafka-server:
+          properties:
+            bootstrap.servers: "dbrep-kafka:9092"
+          connect:
+            - name: "kafka-connect-v3"
+              url: "http://dbrep-kafka-connect-v3-cp-kafka-connect:8083"
