@@ -1,0 +1,8 @@
+apiVersion: v2
+name: dbrep-akhq
+description: A wrapper chart for AKHQ
+version: 0.1.0
+dependencies:
+  - name: akhq
+    version: 0.1.0
+    repository: "file://../../helm-chart/akhq"

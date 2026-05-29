@@ -19,7 +19,7 @@ kafka-connect-ui:
 
   # If not set it uses default strimzi kafka-connect url #release-name-connect-cluster-connect-api
   connectCluster:
-    url: http://dbrep-kafka-connect-cp-kafka-connect:8083
+    url: http://dbrep-kafka-connect-v3-cp-kafka-connect:8083
 
   ## Ingress configuration
   ## Ref: https://kubernetes.io/docs/concepts/services-networking/ingress/

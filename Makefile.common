@@ -67,6 +67,8 @@ base-infra-up: .check-tools
 	helm upgrade --install dbrep-kafka deployment/kafka -f deployment/kafka/values-kraft.yaml -n $(NAMESPACE)
 	helm dependency build deployment/redpanda-console
 	helm upgrade --install dbrep-redpanda-console deployment/redpanda-console -f deployment/redpanda-console/values.yaml -n $(NAMESPACE)
+	helm dependency build deployment/akhq
+	helm upgrade --install dbrep-akhq deployment/akhq -f deployment/akhq/values.yaml -n $(NAMESPACE)
 	helm dependency build deployment/mariadb
 	helm upgrade --install dbrep-mariadb deployment/mariadb -f deployment/mariadb/values.yaml -n $(NAMESPACE)
 	helm dependency build deployment/postgres
@@ -85,6 +87,7 @@ base-infra-up: .check-tools
 	kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=mariadb --timeout=300s -n $(NAMESPACE)
 	kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=postgresql --timeout=300s -n $(NAMESPACE)
 	kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=curl-client --timeout=120s -n $(NAMESPACE)
+	kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=akhq --timeout=120s -n $(NAMESPACE)
 	kubectl wait --for=condition=ready pod -l app=oracle-db --timeout=300s -n $(NAMESPACE)
 	@echo "[OK] All pods ready"
 
@@ -99,6 +102,7 @@ clean:
 	-helm uninstall dbrep-mariadb -n $(NAMESPACE) || true
 	-helm uninstall dbrep-postgres -n $(NAMESPACE) || true
 	-helm uninstall dbrep-redpanda-console -n $(NAMESPACE) || true
+	-helm uninstall dbrep-akhq -n $(NAMESPACE) || true
 	-helm uninstall dbrep-kafka-connect-v3 -n $(NAMESPACE) || true
 	-helm uninstall dbrep-kafka -n $(NAMESPACE) || true
 	-helm uninstall dbrep-curl-client -n $(NAMESPACE) || true
@@ -192,8 +196,10 @@ status:
 port-forward:
 	@echo "Setting up port forwarding..."
 	@echo "Redpanda Console: http://localhost:8080"
+	@echo "AKHQ:             http://localhost:8081"
 	@echo "Kafka Connect API: http://localhost:8083"
-	kubectl port-forward svc/dbrep-redpanda-console 8080:8080 -n $(NAMESPACE) &
-	kubectl port-forward svc/$(KAFKA_CONNECT_SVC) 8083:8083 -n $(NAMESPACE) &
+	kubectl port-forward svc/dbrep-redpanda-console 38080:8080 -n $(NAMESPACE) &
+	kubectl port-forward svc/dbrep-akhq 38081:8080 -n $(NAMESPACE) &
+	kubectl port-forward svc/$(KAFKA_CONNECT_SVC) 38083:8083 -n $(NAMESPACE) &
 	@echo "[INFO] Port forwarding started in background. Press Ctrl+C to stop all."
 	wait
