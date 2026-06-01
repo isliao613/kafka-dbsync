@@ -75,8 +75,8 @@ diagnosticMode:
 ## @param image.debug Specify if debug logs should be enabled
 ##
 image:
-  registry: public.ecr.aws
-  repository: bitnami/mariadb
+  registry: docker.io
+  repository: bitnamilegacy/mariadb
   tag: 10.6.10-debian-11-r6
   digest: ""
   ## Specify a imagePullPolicy

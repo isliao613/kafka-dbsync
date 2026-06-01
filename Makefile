@@ -76,6 +76,13 @@ help:
 	@echo "  iidr-status          - Check IIDR connector status"
 	@echo "  iidr-clean           - Clean up IIDR test resources"
 	@echo ""
+	@echo "=== MariaDB E2E Testing (Makefile.mariadb-e2e) ==="
+	@echo "  mariadb-e2e-all      - Full MariaDB E2E pipeline"
+	@echo "  mariadb-e2e-setup    - Set up databases for MariaDB testing"
+	@echo "  mariadb-e2e-run      - Run MariaDB CDC tests"
+	@echo "  mariadb-e2e-verify   - Verify data in PostgreSQL"
+	@echo "  mariadb-e2e-clean    - Clean up MariaDB connectors and tables"
+	@echo ""
 	@echo "Kafka Connect Service:"
 	@echo "  Debezium: $(KAFKA_CONNECT_SVC):8083"
 
@@ -211,3 +218,24 @@ iidr-status:
 
 iidr-clean:
 	@$(MAKE) -f Makefile.iidr clean
+
+# =============================================================================
+# MariaDB E2E Testing (Makefile.mariadb-e2e)
+# =============================================================================
+
+.PHONY: mariadb-e2e-all mariadb-e2e-setup mariadb-e2e-run mariadb-e2e-verify mariadb-e2e-clean
+
+mariadb-e2e-all:
+	@$(MAKE) -f Makefile.mariadb-e2e all
+
+mariadb-e2e-setup:
+	@$(MAKE) -f Makefile.mariadb-e2e test-setup
+
+mariadb-e2e-run:
+	@$(MAKE) -f Makefile.mariadb-e2e test-run
+
+mariadb-e2e-verify:
+	@$(MAKE) -f Makefile.mariadb-e2e test-verify
+
+mariadb-e2e-clean:
+	@$(MAKE) -f Makefile.mariadb-e2e test-clean
