@@ -10,10 +10,10 @@ kafka:
     security:
       allowInsecureImages: true
 
-  ## Kafka image - using ECR public registry (docker.io/bitnami requires subscription)
+  ## Kafka image - using bitnamilegacy registry (ECR is being deprecated)
   image:
-    registry: public.ecr.aws
-    repository: bitnami/kafka
+    registry: docker.io
+    repository: bitnamilegacy/kafka
     tag: 3.9.0-debian-12-r4
     pullPolicy: IfNotPresent
 

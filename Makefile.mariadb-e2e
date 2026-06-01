@@ -1,0 +1,146 @@
+# Makefile.mariadb-e2e
+#
+# End-to-end testing for MariaDB CDC to PostgreSQL replication.
+#
+# ==============================================================================
+
+.DEFAULT_GOAL := help
+
+include Makefile.param
+
+# =============================================================================
+# Phony Targets
+# =============================================================================
+
+.PHONY: help all \
+	test test-setup test-run test-verify test-clean \
+	setup-source setup-target \
+	register verify
+
+# =============================================================================
+# Help
+# =============================================================================
+
+help:
+	@echo "Usage: make -f Makefile.mariadb-e2e [target]"
+	@echo ""
+	@echo "Full Workflows:"
+	@echo "  all                  - Full E2E pipeline"
+	@echo ""
+	@echo "Testing:"
+	@echo "  test                 - Run full test cycle (setup, run, verify, clean)"
+	@echo "  test-setup           - Set up databases for testing"
+	@echo "  test-run             - Run CDC tests (insert, update, delete)"
+	@echo "  test-verify          - Verify data in target tables"
+	@echo "  test-clean           - Clean up connectors and tables"
+	@echo ""
+	@echo "Database Setup:"
+	@echo "  setup-source         - Set up MariaDB source database"
+	@echo "  setup-target         - Set up PostgreSQL target database"
+	@echo ""
+	@echo "Connector Management:"
+	@echo "  register             - Register connectors"
+	@echo "  verify               - Verify data"
+
+# =============================================================================
+# Full Workflows
+# =============================================================================
+
+all: setup-source setup-target register test-run verify
+	@echo "[OK] MariaDB E2E pipeline completed!"
+
+# =============================================================================
+# Database Setup
+# =============================================================================
+
+setup-source:
+	@echo "[INFO] Setting up MariaDB source..."
+	kubectl cp hack/sql/mariadb-source-setup.sql $(MARIADB_POD):/tmp/setup.sql -n $(NAMESPACE)
+	kubectl exec -i $(MARIADB_POD) -n $(NAMESPACE) -- mysql -u$(MARIADB_USER) -p$(MARIADB_PASS) < hack/sql/mariadb-source-setup.sql
+	@echo "[OK] MariaDB source setup completed"
+
+setup-target:
+	@echo "[INFO] Setting up PostgreSQL target..."
+	kubectl exec $(POSTGRES_POD) -n $(NAMESPACE) -- env PGPASSWORD=$(POSTGRES_PASS) psql -U $(POSTGRES_USER) -d $(POSTGRES_DB) -c \
+		"DROP TABLE IF EXISTS mariadb_source_orders;"
+	@echo "[OK] PostgreSQL target setup completed"
+
+# =============================================================================
+# Connector Registration
+# =============================================================================
+
+register:
+	@echo "[INFO] Registering connectors on $(KAFKA_CONNECT_SVC)..."
+	@echo "[INFO] Waiting for Kafka Connect API to be ready..."
+	@for i in $$(seq 1 30); do \
+		if kubectl exec $(CURL_POD) -n $(NAMESPACE) -- curl -sf http://$(KAFKA_CONNECT_SVC):8083/connectors >/dev/null; then \
+			echo "[OK] Kafka Connect API is ready"; \
+			break; \
+		fi; \
+		echo "...waiting ($$i/30)"; \
+		sleep 5; \
+	done
+	kubectl cp hack/source-debezium/mariadb-source.json $(CURL_POD):/tmp/mariadb-source.json -n $(NAMESPACE)
+	kubectl exec $(CURL_POD) -n $(NAMESPACE) -- curl -sf --max-time 10 -X POST \
+		http://$(KAFKA_CONNECT_SVC):8083/connectors \
+		-H "Content-Type: application/json" \
+		-d @/tmp/mariadb-source.json || echo "[ERROR] Failed to register source connector"
+	@echo "[INFO] Waiting 15s for initial snapshot..."
+	@sleep 15
+	kubectl cp hack/sink-jdbc/mariadb-to-pg-sink.json $(CURL_POD):/tmp/mariadb-sink.json -n $(NAMESPACE)
+	kubectl exec $(CURL_POD) -n $(NAMESPACE) -- curl -sf --max-time 10 -X POST \
+		http://$(KAFKA_CONNECT_SVC):8083/connectors \
+		-H "Content-Type: application/json" \
+		-d @/tmp/mariadb-sink.json || echo "[ERROR] Failed to register sink connector"
+	@echo "[INFO] Waiting 10s for sync..."
+	@sleep 10
+	@echo "[OK] Connectors registered"
+
+# =============================================================================
+# Verification
+# =============================================================================
+
+verify:
+	@echo "[INFO] Data in PostgreSQL mariadb_source_orders:"
+	@kubectl exec $(POSTGRES_POD) -n $(NAMESPACE) -- env PGPASSWORD=$(POSTGRES_PASS) psql -U $(POSTGRES_USER) -d $(POSTGRES_DB) -c \
+		"SELECT * FROM mariadb_source_orders ORDER BY id;" 2>/dev/null || echo "Table not found or empty"
+
+# =============================================================================
+# Testing
+# =============================================================================
+
+test: test-setup test-run test-verify test-clean
+
+test-setup: setup-source setup-target
+
+test-run:
+	@echo "[INFO] Running CDC tests..."
+	@echo "[INFO] Testing INSERT..."
+	@kubectl exec -i $(MARIADB_POD) -n $(NAMESPACE) -- mysql -u$(MARIADB_USER) -p$(MARIADB_PASS) -e \
+		"INSERT INTO source_database.source_orders(id, order_no, customer_name, amount, status) VALUES(5, 'ORD-005', 'Eve', 3100.00, 'PENDING');"
+	@echo "[INFO] Waiting 5s for replication..." && sleep 5
+	@echo "[INFO] Testing UPDATE..."
+	@kubectl exec -i $(MARIADB_POD) -n $(NAMESPACE) -- mysql -u$(MARIADB_USER) -p$(MARIADB_PASS) -e \
+		"UPDATE source_database.source_orders SET status='COMPLETED' WHERE id=1;"
+	@echo "[INFO] Waiting 5s for replication..." && sleep 5
+	@echo "[INFO] Testing DELETE..."
+	@kubectl exec -i $(MARIADB_POD) -n $(NAMESPACE) -- mysql -u$(MARIADB_USER) -p$(MARIADB_PASS) -e \
+		"DELETE FROM source_database.source_orders WHERE id=3;"
+	@echo "[INFO] Waiting 5s for replication..." && sleep 5
+
+test-verify: verify
+
+test-clean:
+	@echo "[INFO] Deleting connectors..."
+	-kubectl exec $(CURL_POD) -n $(NAMESPACE) -- curl -s -X DELETE \
+		http://$(KAFKA_CONNECT_SVC):8083/connectors/source_cdc_mariadb_demo
+	-kubectl exec $(CURL_POD) -n $(NAMESPACE) -- curl -s -X DELETE \
+		http://$(KAFKA_CONNECT_SVC):8083/connectors/sink_cdc_mariadb_to_pg
+	@echo "[OK] Connectors deleted"
+	@echo "[INFO] Dropping MariaDB source table..."
+	-kubectl exec $(MARIADB_POD) -n $(NAMESPACE) -- mysql -u$(MARIADB_USER) -p$(MARIADB_PASS) \
+		-e "DROP DATABASE IF EXISTS source_database;"
+	@echo "[INFO] Dropping PostgreSQL target tables..."
+	-kubectl exec $(POSTGRES_POD) -n $(NAMESPACE) -- env PGPASSWORD=$(POSTGRES_PASS) psql -U $(POSTGRES_USER) -d $(POSTGRES_DB) -c \
+		"DROP TABLE IF EXISTS mariadb_source_orders;"
+	@echo "[OK] Reset completed"

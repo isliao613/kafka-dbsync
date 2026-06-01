@@ -60,8 +60,8 @@ base-infra-up: .check-tools
 	-kubectl create ns $(NAMESPACE)
 	kubectl config set-context --current --namespace $(NAMESPACE)
 	@echo "[INFO] Deploying services..."
-	docker pull public.ecr.aws/bitnami/kafka:3.9.0-debian-12-r4
-	kind load docker-image public.ecr.aws/bitnami/kafka:3.9.0-debian-12-r4 --name $(CLUSTER_NAME)
+	docker pull bitnamilegacy/kafka:3.9.0-debian-12-r4
+	kind load docker-image bitnamilegacy/kafka:3.9.0-debian-12-r4 --name $(CLUSTER_NAME)
 	helm repo add bitnami https://charts.bitnami.com/bitnami
 	helm dependency build deployment/kafka
 	helm upgrade --install dbrep-kafka deployment/kafka -f deployment/kafka/values-kraft.yaml -n $(NAMESPACE)
