@@ -2,8 +2,8 @@ redpanda-console:
   replicaCount: 1
 
   image:
-    repository: redpandadata/console
-    tag: v3.7.3
+    repository: isliao613/redpanda-console
+    tag: v3.7.4-patched
     pullPolicy: IfNotPresent
 
   nameOverride: ""
