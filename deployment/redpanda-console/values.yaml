@@ -3,7 +3,7 @@ redpanda-console:
 
   image:
     repository: isliao613/redpanda-console
-    tag: v3.7.4-patched
+    tag: v3.7.4-patched-2
     pullPolicy: IfNotPresent
 
   nameOverride: ""
