@@ -1,0 +1,155 @@
+# Makefile.mongo-e2e
+#
+# End-to-end testing for MongoDB CDC replication.
+# Source: MongoDB source_database.source_orders (Debezium MongoDB connector)
+# Sink:   MongoDB target_database.target_orders (MongoDB Kafka sink connector)
+#
+# Can be run independently: make -f Makefile.mongo-e2e <target>
+#
+# Prerequisites:
+#   - Infrastructure deployed (make -f Makefile.common base-infra-up)
+#   - Kafka Connect image built (make -f Makefile.docker build)
+#
+# ==============================================================================
+
+.DEFAULT_GOAL := help
+
+include Makefile.param
+
+MONGOSH = kubectl exec $(MONGO_POD) -n $(NAMESPACE) -- mongosh --quiet
+KAFKA_EXEC = kubectl exec $(KAFKA_POD) -n $(NAMESPACE) -- /opt/bitnami/kafka/bin/kafka-topics.sh \
+	--bootstrap-server localhost:9092
+
+# =============================================================================
+# Phony Targets
+# =============================================================================
+
+.PHONY: help all \
+	test test-setup test-run test-verify test-clean \
+	setup-source setup-target \
+	register verify
+
+# =============================================================================
+# Help
+# =============================================================================
+
+help:
+	@echo "Usage: make -f Makefile.mongo-e2e [target]"
+	@echo ""
+	@echo "Full Workflows:"
+	@echo "  all                  - Full E2E pipeline"
+	@echo ""
+	@echo "Testing:"
+	@echo "  test                 - Run full test cycle (setup, run, verify, clean)"
+	@echo "  test-setup           - Set up MongoDB source and target collections"
+	@echo "  test-run             - Run CDC tests (insert, update, delete)"
+	@echo "  test-verify          - Verify data in target collection"
+	@echo "  test-clean           - Clean up connectors and collections"
+	@echo ""
+	@echo "Collection Setup:"
+	@echo "  setup-source         - Insert initial documents into MongoDB source"
+	@echo "  setup-target         - Drop target collection for a clean test"
+	@echo ""
+	@echo "Connector Management:"
+	@echo "  register             - Register MongoDB source and sink connectors"
+	@echo "  verify               - Verify data in target collection"
+
+# =============================================================================
+# Full Workflows
+# =============================================================================
+
+all: setup-source setup-target register test-run verify
+	@echo "[OK] MongoDB E2E pipeline completed!"
+
+# =============================================================================
+# Collection Setup
+# =============================================================================
+
+setup-source:
+	@echo "[INFO] Setting up MongoDB source collection..."
+	$(MONGOSH) --eval \
+		'db.getSiblingDB("source_database").source_orders.drop(); db.getSiblingDB("source_database").source_orders.insertMany([{_id:1,order_no:"ORD-001",customer_name:"Alice",amount:1000,status:"PENDING"},{_id:2,order_no:"ORD-002",customer_name:"Bob",amount:2000,status:"PROCESSING"},{_id:3,order_no:"ORD-003",customer_name:"Charlie",amount:1500,status:"COMPLETED"},{_id:4,order_no:"ORD-004",customer_name:"Diana",amount:500,status:"PENDING"}]); print("Inserted " + db.getSiblingDB("source_database").source_orders.countDocuments() + " documents")'
+	@echo "[OK] MongoDB source setup completed"
+
+setup-target:
+	@echo "[INFO] Dropping target collection and CDC topic for clean test..."
+	$(MONGOSH) --eval 'db.getSiblingDB("target_database").target_orders.drop(); print("Target collection dropped")'
+	-$(KAFKA_EXEC) --delete --topic cdc_mongodb.source_database.source_orders 2>/dev/null || true
+	@echo "[OK] Target collection and topic cleared"
+
+# =============================================================================
+# Connector Registration
+# =============================================================================
+
+register:
+	@echo "[INFO] Registering connectors on $(KAFKA_CONNECT_SVC)..."
+	@echo "[INFO] Waiting for Kafka Connect API to be ready..."
+	@for i in $$(seq 1 30); do \
+		if kubectl exec $(CURL_POD) -n $(NAMESPACE) -- curl -sf http://$(KAFKA_CONNECT_SVC):8083/connectors >/dev/null; then \
+			echo "[OK] Kafka Connect API is ready"; \
+			break; \
+		fi; \
+		echo "...waiting ($$i/30)"; \
+		sleep 5; \
+	done
+	kubectl cp hack/source-debezium/mongodb-source.json $(CURL_POD):/tmp/mongodb-source.json -n $(NAMESPACE)
+	kubectl exec $(CURL_POD) -n $(NAMESPACE) -- curl -sf --max-time 10 -X POST \
+		http://$(KAFKA_CONNECT_SVC):8083/connectors \
+		-H "Content-Type: application/json" \
+		-d @/tmp/mongodb-source.json || echo "[ERROR] Failed to register source connector"
+	@echo "[INFO] Waiting 20s for initial snapshot..."
+	@sleep 20
+	kubectl cp hack/sink-mongodb/mongodb-sink.json $(CURL_POD):/tmp/mongodb-sink.json -n $(NAMESPACE)
+	kubectl exec $(CURL_POD) -n $(NAMESPACE) -- curl -sf --max-time 10 -X POST \
+		http://$(KAFKA_CONNECT_SVC):8083/connectors \
+		-H "Content-Type: application/json" \
+		-d @/tmp/mongodb-sink.json || echo "[ERROR] Failed to register sink connector"
+	@echo "[INFO] Waiting 10s for sync..."
+	@sleep 10
+	@echo "[OK] Connectors registered"
+
+# =============================================================================
+# Verification
+# =============================================================================
+
+verify:
+	@echo "[INFO] Data in MongoDB target_database.target_orders:"
+	$(MONGOSH) --eval 'db.getSiblingDB("target_database").target_orders.find().sort({_id:1}).forEach(d => print(EJSON.stringify(d)))' 2>/dev/null || echo "Collection not found or empty"
+
+# =============================================================================
+# Testing
+# =============================================================================
+
+test: test-setup test-run test-verify test-clean
+
+test-setup: setup-source setup-target
+
+test-run:
+	@echo "[INFO] Running CDC tests..."
+	@echo "[INFO] Testing INSERT..."
+	$(MONGOSH) --eval \
+		'db.getSiblingDB("source_database").source_orders.insertOne({_id:5,order_no:"ORD-005",customer_name:"Eve",amount:3100,status:"PENDING"})'
+	@echo "[INFO] Waiting 5s for replication..." && sleep 5
+	@echo "[INFO] Testing UPDATE..."
+	$(MONGOSH) --eval \
+		'db.getSiblingDB("source_database").source_orders.updateOne({_id:1},{$$set:{status:"COMPLETED"}})'
+	@echo "[INFO] Waiting 5s for replication..." && sleep 5
+	@echo "[INFO] Testing DELETE..."
+	$(MONGOSH) --eval \
+		'db.getSiblingDB("source_database").source_orders.deleteOne({_id:3})'
+	@echo "[INFO] Waiting 5s for replication..." && sleep 5
+
+test-verify: verify
+
+test-clean:
+	@echo "[INFO] Deleting connectors..."
+	-kubectl exec $(CURL_POD) -n $(NAMESPACE) -- curl -s -X DELETE \
+		http://$(KAFKA_CONNECT_SVC):8083/connectors/source_cdc_mongodb_demo
+	-kubectl exec $(CURL_POD) -n $(NAMESPACE) -- curl -s -X DELETE \
+		http://$(KAFKA_CONNECT_SVC):8083/connectors/sink_cdc_mongodb_to_mongodb
+	@echo "[OK] Connectors deleted"
+	@echo "[INFO] Dropping MongoDB source and target collections..."
+	$(MONGOSH) --eval \
+		'db.getSiblingDB("source_database").source_orders.drop(); db.getSiblingDB("target_database").target_orders.drop(); print("Collections dropped")'
+	-$(KAFKA_EXEC) --delete --topic cdc_mongodb.source_database.source_orders 2>/dev/null || true
+	@echo "[OK] Reset completed"

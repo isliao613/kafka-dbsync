@@ -1,0 +1,22 @@
+{
+    "name": "sink_cdc_mongodb_to_mongodb",
+    "config": {
+        "connector.class": "com.mongodb.kafka.connect.MongoSinkConnector",
+        "tasks.max": "1",
+        "topics": "cdc_mongodb.source_database.source_orders",
+        "connection.uri": "mongodb://dbrep-mongodb-0.dbrep-mongodb-headless.dev.svc.cluster.local:27017/?directConnection=true",
+        "database": "target_database",
+        "collection": "target_orders",
+        "key.converter": "org.apache.kafka.connect.json.JsonConverter",
+        "value.converter": "org.apache.kafka.connect.json.JsonConverter",
+        "key.converter.schemas.enable": "false",
+        "value.converter.schemas.enable": "false",
+        "document.id.strategy": "com.mongodb.kafka.connect.sink.processor.id.strategy.ProvidedInValueStrategy",
+        "writemodel.strategy": "com.mongodb.kafka.connect.sink.writemodel.strategy.ReplaceOneDefaultStrategy",
+        "transforms": "dropTombstones",
+        "transforms.dropTombstones.type": "org.apache.kafka.connect.transforms.Filter",
+        "transforms.dropTombstones.predicate": "isTombstone",
+        "predicates": "isTombstone",
+        "predicates.isTombstone.type": "org.apache.kafka.connect.transforms.predicates.RecordIsTombstone"
+    }
+}

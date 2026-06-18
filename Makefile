@@ -34,6 +34,7 @@ help:
 	@echo "  make -f Makefile.e2e help       # E2E testing"
 	@echo "  make -f Makefile.datatype help  # Datatype testing"
 	@echo "  make -f Makefile.iidr help      # IIDR CDC sink testing"
+	@echo "  make -f Makefile.mongo-e2e help # MongoDB E2E testing"
 	@echo ""
 	@echo "=== Infrastructure (Makefile.common) ==="
 	@echo "  base-infra-up        - Create Kind cluster and deploy base services"
@@ -42,6 +43,7 @@ help:
 	@echo "  setup-oracle         - Set up Oracle XE 21c for CDC"
 	@echo "  setup-mariadb        - Set up MariaDB target database"
 	@echo "  setup-postgres       - Set up PostgreSQL target database"
+	@echo "  setup-mongodb        - Verify MongoDB connectivity"
 	@echo "  logs                 - View Kafka Connect logs"
 	@echo "  status               - Check connector status"
 	@echo "  port-forward         - Set up port forwarding"
@@ -83,6 +85,13 @@ help:
 	@echo "  mariadb-e2e-verify   - Verify data in PostgreSQL"
 	@echo "  mariadb-e2e-clean    - Clean up MariaDB connectors and tables"
 	@echo ""
+	@echo "=== MongoDB E2E Testing (Makefile.mongo-e2e) ==="
+	@echo "  mongo-e2e-all        - Full MongoDB E2E pipeline"
+	@echo "  mongo-e2e-setup      - Set up MongoDB source and target collections"
+	@echo "  mongo-e2e-run        - Run MongoDB CDC tests"
+	@echo "  mongo-e2e-verify     - Verify data in MongoDB target collection"
+	@echo "  mongo-e2e-clean      - Clean up MongoDB connectors and collections"
+	@echo ""
 	@echo "Kafka Connect Service:"
 	@echo "  Debezium: $(KAFKA_CONNECT_SVC):8083"
 
@@ -90,7 +99,7 @@ help:
 # Infrastructure (Makefile.common)
 # =============================================================================
 
-.PHONY: base-infra-up clean .tools .check-tools setup-oracle setup-mariadb setup-postgres \
+.PHONY: base-infra-up clean .tools .check-tools setup-oracle setup-mariadb setup-postgres setup-mongodb \
 	logs status port-forward
 
 base-infra-up:
@@ -113,6 +122,9 @@ setup-mariadb:
 
 setup-postgres:
 	@$(MAKE) -f Makefile.common setup-postgres
+
+setup-mongodb:
+	@$(MAKE) -f Makefile.common setup-mongodb
 
 logs:
 	@$(MAKE) -f Makefile.common logs
@@ -239,3 +251,24 @@ mariadb-e2e-verify:
 
 mariadb-e2e-clean:
 	@$(MAKE) -f Makefile.mariadb-e2e test-clean
+
+# =============================================================================
+# MongoDB E2E Testing (Makefile.mongo-e2e)
+# =============================================================================
+
+.PHONY: mongo-e2e-all mongo-e2e-setup mongo-e2e-run mongo-e2e-verify mongo-e2e-clean
+
+mongo-e2e-all:
+	@$(MAKE) -f Makefile.mongo-e2e all
+
+mongo-e2e-setup:
+	@$(MAKE) -f Makefile.mongo-e2e test-setup
+
+mongo-e2e-run:
+	@$(MAKE) -f Makefile.mongo-e2e test-run
+
+mongo-e2e-verify:
+	@$(MAKE) -f Makefile.mongo-e2e test-verify
+
+mongo-e2e-clean:
+	@$(MAKE) -f Makefile.mongo-e2e test-clean
