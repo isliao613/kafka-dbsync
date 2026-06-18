@@ -1,0 +1,98 @@
+# MongoDB single-node replica set for CDC (change streams require replica set)
+# Uses official mongo:7.0 image. No auth — dev/test environment only.
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: dbrep-mongodb-headless
+  labels:
+    app: mongodb
+spec:
+  clusterIP: None
+  selector:
+    app: mongodb
+  ports:
+    - name: mongodb
+      port: 27017
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: dbrep-mongodb
+  labels:
+    app: mongodb
+spec:
+  selector:
+    app: mongodb
+  ports:
+    - name: mongodb
+      port: 27017
+
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: dbrep-mongodb
+spec:
+  serviceName: dbrep-mongodb-headless
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mongodb
+  template:
+    metadata:
+      labels:
+        app: mongodb
+    spec:
+      containers:
+        - name: mongodb
+          image: mongo:7.0
+          args:
+            - "--replSet"
+            - "rs0"
+            - "--bind_ip_all"
+          lifecycle:
+            postStart:
+              exec:
+                command:
+                  - bash
+                  - -c
+                  - |
+                    for i in $(seq 1 30); do
+                      mongosh --quiet --eval "db.adminCommand({ping:1})" >/dev/null 2>&1 && break
+                      sleep 2
+                    done
+                    mongosh --quiet --eval "try { rs.initiate({_id:'rs0',members:[{_id:0,host:'dbrep-mongodb-0.dbrep-mongodb-headless.dev.svc.cluster.local:27017'}]}) } catch(e) {}" >/dev/null 2>&1 || true
+          readinessProbe:
+            exec:
+              command:
+                - mongosh
+                - --quiet
+                - --eval
+                - "db.adminCommand({ping:1})"
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
+          ports:
+            - containerPort: 27017
+          resources:
+            requests:
+              memory: 256Mi
+              cpu: 100m
+            limits:
+              memory: 512Mi
+              cpu: 500m
+          volumeMounts:
+            - name: data
+              mountPath: /data/db
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        resources:
+          requests:
+            storage: 1Gi

@@ -14,7 +14,7 @@ include Makefile.param
 # =============================================================================
 
 .PHONY: help base-infra-up clean .check-tools .tools \
-	setup-oracle setup-mariadb setup-postgres \
+	setup-oracle setup-mariadb setup-postgres setup-mongodb \
 	logs status port-forward
 
 # =============================================================================
@@ -34,6 +34,7 @@ help:
 	@echo "  setup-oracle         - Set up Oracle XE 21c for CDC"
 	@echo "  setup-mariadb        - Set up MariaDB target database"
 	@echo "  setup-postgres       - Set up PostgreSQL target database"
+	@echo "  setup-mongodb        - Verify MongoDB connectivity"
 	@echo ""
 	@echo "Utilities:"
 	@echo "  logs                 - View logs of Kafka Connect"
@@ -77,6 +78,7 @@ base-infra-up: .check-tools
 	kubectl apply -f helm-chart/minio/minio-dev.yaml -n $(NAMESPACE)
 	helm dependency build deployment/mssql
 	helm upgrade --install dbrep-mssql deployment/mssql -f deployment/mssql/values.yaml -n $(NAMESPACE)
+	kubectl apply -f deployment/mongodb/mongodb.yaml -n $(NAMESPACE)
 	@echo "[INFO] Deploying Oracle XE 21c..."
 	kubectl apply -f deployment/oracle/oracle-free.yaml -n $(NAMESPACE)
 	helm dependency build deployment/curl-client
@@ -86,6 +88,7 @@ base-infra-up: .check-tools
 	kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=kafka --timeout=300s -n $(NAMESPACE)
 	kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=mariadb --timeout=300s -n $(NAMESPACE)
 	kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=postgresql --timeout=300s -n $(NAMESPACE)
+	kubectl wait --for=condition=ready pod -l app=mongodb --timeout=300s -n $(NAMESPACE)
 	kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=curl-client --timeout=120s -n $(NAMESPACE)
 	kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=akhq --timeout=120s -n $(NAMESPACE)
 	kubectl wait --for=condition=ready pod -l app=oracle-db --timeout=300s -n $(NAMESPACE)
@@ -98,6 +101,8 @@ clean:
 	sleep 10
 	-kubectl delete -f deployment/oracle/oracle-free.yaml -n $(NAMESPACE) || true
 	-helm uninstall dbrep-mssql -n $(NAMESPACE) || true
+	-kubectl delete -f deployment/mongodb/mongodb.yaml -n $(NAMESPACE) || true
+	-kubectl delete pvc -l app=mongodb -n $(NAMESPACE) || true
 	-kubectl delete -f helm-chart/minio/minio-dev.yaml -n $(NAMESPACE) || true
 	-helm uninstall dbrep-mariadb -n $(NAMESPACE) || true
 	-helm uninstall dbrep-postgres -n $(NAMESPACE) || true
@@ -179,6 +184,11 @@ setup-postgres:
 	kubectl exec $(POSTGRES_POD) -n $(NAMESPACE) -- env PGPASSWORD=$(POSTGRES_PASS) psql -U $(POSTGRES_USER) -d $(POSTGRES_DB) -c \
 		"DROP TABLE IF EXISTS target_orders;"
 	@echo "[OK] PostgreSQL setup completed"
+
+setup-mongodb:
+	@echo "[INFO] Verifying MongoDB connectivity..."
+	kubectl exec $(MONGO_POD) -n $(NAMESPACE) -- mongosh --quiet --eval 'db.adminCommand({ping:1})'
+	@echo "[OK] MongoDB is ready"
 
 # =============================================================================
 # Utilities

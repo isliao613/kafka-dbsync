@@ -1,0 +1,21 @@
+{
+    "name": "source_cdc_mongodb_demo",
+    "config": {
+        "connector.class": "io.debezium.connector.mongodb.MongoDbConnector",
+        "tasks.max": "1",
+        "mongodb.connection.string": "mongodb://dbrep-mongodb-0.dbrep-mongodb-headless.dev.svc.cluster.local:27017/?replicaSet=rs0&directConnection=true",
+        "topic.prefix": "cdc_mongodb",
+        "database.include.list": "source_database",
+        "collection.include.list": "source_database.source_orders",
+        "capture.mode": "change_streams_update_full",
+        "snapshot.mode": "initial",
+        "key.converter": "org.apache.kafka.connect.json.JsonConverter",
+        "value.converter": "org.apache.kafka.connect.json.JsonConverter",
+        "key.converter.schemas.enable": "false",
+        "value.converter.schemas.enable": "false",
+        "transforms": "unwrap",
+        "transforms.unwrap.type": "io.debezium.connector.mongodb.transforms.ExtractNewDocumentState",
+        "transforms.unwrap.delete.handling.mode": "drop",
+        "transforms.unwrap.drop.tombstones": "true"
+    }
+}
