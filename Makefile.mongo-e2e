@@ -112,9 +112,27 @@ register:
 # Verification
 # =============================================================================
 
+# Asserts the CDC semantics exercised by test-run: the snapshot carries 4 documents,
+# test-run adds _id=5, updates _id=1 and deletes _id=3, leaving 4 documents.
+# Deletes reach the target as tombstones, which the sink turns into deletes via
+# delete.on.null.values -- a tombstone carries no value, so the sink resolves the
+# document id from the key (ProvidedInKeyStrategy) after the key field is renamed
+# id -> _id. Printing without asserting hid the fact that deletes were being dropped.
 verify:
 	@echo "[INFO] Data in MongoDB target_database.target_orders:"
-	$(MONGOSH) --eval 'db.getSiblingDB("target_database").target_orders.find().sort({_id:1}).forEach(d => print(EJSON.stringify(d)))' 2>/dev/null || echo "Collection not found or empty"
+	$(MONGOSH) --eval 'db.getSiblingDB("target_database").target_orders.find().sort({_id:1}).forEach(d => print(EJSON.stringify(d)))' 2>/dev/null \
+		|| { echo "[FAIL] target collection is missing or unreadable"; exit 1; }
+	@echo "[INFO] Asserting CDC semantics..."
+	@R=$$($(MONGOSH) --eval 'const c=db.getSiblingDB("target_database").target_orders; \
+		const d1=c.findOne({_id:1}); \
+		print([c.countDocuments({}), c.countDocuments({_id:5}), c.countDocuments({_id:3}), d1?d1.status:"-"].join("|"))' 2>/dev/null | tr -d ' \r'); \
+	echo "[INFO] docs|insert(_id=5)|deleted(_id=3)|update(_id=1 status) = $$R"; \
+	if [ "$$R" != "4|1|0|COMPLETED" ]; then \
+		echo "[FAIL] expected 4|1|0|COMPLETED"; \
+		echo "       4 docs, _id=5 present (INSERT), _id=3 absent (DELETE), _id=1 COMPLETED (UPDATE)"; \
+		exit 1; \
+	fi
+	@echo "[OK] INSERT, UPDATE and DELETE all replicated"
 
 # =============================================================================
 # Testing

@@ -100,10 +100,27 @@ register:
 # Verification
 # =============================================================================
 
+# Asserts the CDC semantics exercised by test-run rather than the seed rows: the
+# snapshot carries 4 rows, test-run adds id=5, updates id=1 and deletes id=3, leaving
+# 4 rows with id=3 gone. Printing the table without asserting made a missing table pass.
 verify:
 	@echo "[INFO] Data in PostgreSQL mariadb_source_orders:"
 	@kubectl exec $(POSTGRES_POD) -n $(NAMESPACE) -- env PGPASSWORD=$(POSTGRES_PASS) psql -U $(POSTGRES_USER) -d $(POSTGRES_DB) -c \
-		"SELECT * FROM mariadb_source_orders ORDER BY id;" 2>/dev/null || echo "Table not found or empty"
+		"SELECT * FROM mariadb_source_orders ORDER BY id;" 2>/dev/null \
+		|| { echo "[FAIL] target table is missing or unreadable"; exit 1; }
+	@echo "[INFO] Asserting CDC semantics..."
+	@R=$$(kubectl exec $(POSTGRES_POD) -n $(NAMESPACE) -- env PGPASSWORD=$(POSTGRES_PASS) psql -U $(POSTGRES_USER) -d $(POSTGRES_DB) -t -A -c \
+		"SELECT (SELECT COUNT(*) FROM mariadb_source_orders) || '|' || \
+		        (SELECT COUNT(*) FROM mariadb_source_orders WHERE id=5) || '|' || \
+		        (SELECT COUNT(*) FROM mariadb_source_orders WHERE id=3) || '|' || \
+		        (SELECT COALESCE(MAX(status),'-') FROM mariadb_source_orders WHERE id=1);" 2>/dev/null | tr -d ' '); \
+	echo "[INFO] rows|insert(id=5)|deleted(id=3)|update(id=1 status) = $$R"; \
+	if [ "$$R" != "4|1|0|COMPLETED" ]; then \
+		echo "[FAIL] expected 4|1|0|COMPLETED"; \
+		echo "       4 rows, id=5 present (INSERT), id=3 absent (DELETE), id=1 COMPLETED (UPDATE)"; \
+		exit 1; \
+	fi
+	@echo "[OK] INSERT, UPDATE and DELETE all replicated"
 
 # =============================================================================
 # Testing

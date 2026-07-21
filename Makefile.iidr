@@ -167,22 +167,29 @@ setup-postgres:
 		);"
 	@echo "[OK] PostgreSQL setup completed"
 
+# YugabyteDB is not deployed by base-infra-up. The CREATE TABLE below carried no "-"
+# prefix, so on a cluster without Yugabyte it aborted setup and took the whole
+# iidr-all target down before any of the MariaDB and PostgreSQL testing ran.
 setup-yugabyte:
 	@echo "[INFO] Setting up YugabyteDB tables..."
-	-kubectl exec $(YB_POD) -n $(NAMESPACE) -- /home/yugabyte/bin/ysqlsh -h localhost -c "DROP TABLE IF EXISTS test_orders;"
-	@echo "[INFO] Creating YugabyteDB target tables..."
-	kubectl exec $(YB_POD) -n $(NAMESPACE) -- /home/yugabyte/bin/ysqlsh -h localhost -c \
-		"CREATE TABLE test_orders ( \
-		  id BIGINT PRIMARY KEY, \
-		  order_name VARCHAR(255), \
-		  amount DOUBLE PRECISION, \
-		  status VARCHAR(255), \
-		  created_at TIMESTAMP, \
-		  updated_at TIMESTAMPTZ, \
-		  order_date DATE, \
-		  order_time TIME \
-		);"
-	@echo "[OK] YugabyteDB setup completed"
+	@if ! kubectl get pod $(YB_POD) -n $(NAMESPACE) >/dev/null 2>&1; then \
+		echo "[SKIP] $(YB_POD) is not deployed -- skipping YugabyteDB setup"; \
+	else \
+		kubectl exec $(YB_POD) -n $(NAMESPACE) -- /home/yugabyte/bin/ysqlsh -h localhost -c "DROP TABLE IF EXISTS test_orders;" || true; \
+		echo "[INFO] Creating YugabyteDB target tables..."; \
+		kubectl exec $(YB_POD) -n $(NAMESPACE) -- /home/yugabyte/bin/ysqlsh -h localhost -c \
+			"CREATE TABLE test_orders ( \
+			  id BIGINT PRIMARY KEY, \
+			  order_name VARCHAR(255), \
+			  amount DOUBLE PRECISION, \
+			  status VARCHAR(255), \
+			  created_at TIMESTAMP, \
+			  updated_at TIMESTAMPTZ, \
+			  order_date DATE, \
+			  order_time TIME \
+			);"; \
+		echo "[OK] YugabyteDB setup completed"; \
+	fi
 
 # =============================================================================
 # Connector Registration (MariaDB)
@@ -317,21 +324,29 @@ register-jdbc-pg:
 
 register-jdbc-yb:
 	@echo "[INFO] Registering IIDR JDBC sink connector (YugabyteDB)..."
-	kubectl cp hack/sink-jdbc/iidr_jdbc_sink-yb-test.json $(CURL_POD):/tmp/iidr_jdbc_sink-yb-test.json -n $(NAMESPACE)
-	@kubectl exec $(CURL_POD) -n $(NAMESPACE) -- sh -c '\
-		if curl -sf -o /dev/null --max-time 10 \
-			http://$(KAFKA_CONNECT_SVC):8083/connectors/$(IIDR_JDBC_CONNECTOR_YB) 2>/dev/null; then \
-			echo "[SKIP] Connector $(IIDR_JDBC_CONNECTOR_YB) already exists."; \
-		else \
-			curl -sf --max-time 20 -X POST \
-				http://$(KAFKA_CONNECT_SVC):8083/connectors \
-				-H "Content-Type: application/json" \
-				-d @/tmp/iidr_jdbc_sink-yb-test.json || { echo "[ERROR] Failed to register connector"; exit 1; }; \
-			echo; \
-			echo "[OK] IIDR JDBC sink connector (YugabyteDB) registered"; \
-			echo "[INFO] Waiting 5s for connector to start..."; \
-			sleep 5; \
-		fi'
+	@# YugabyteDB is not deployed by base-infra-up; registering against a missing target
+	@# only parks a permanently FAILED connector on the worker, so skip instead. The
+	@# guard and the registration share one shell: a bare "exit 0" on its own recipe
+	@# line would only end that line and the copy below would still run.
+	@if ! kubectl get pod $(YB_POD) -n $(NAMESPACE) >/dev/null 2>&1; then \
+		echo "[SKIP] $(YB_POD) is not deployed -- skipping YugabyteDB sink registration"; \
+	else \
+		kubectl cp hack/sink-jdbc/iidr_jdbc_sink-yb-test.json $(CURL_POD):/tmp/iidr_jdbc_sink-yb-test.json -n $(NAMESPACE); \
+		kubectl exec $(CURL_POD) -n $(NAMESPACE) -- sh -c '\
+			if curl -sf -o /dev/null --max-time 10 \
+				http://$(KAFKA_CONNECT_SVC):8083/connectors/$(IIDR_JDBC_CONNECTOR_YB) 2>/dev/null; then \
+				echo "[SKIP] Connector $(IIDR_JDBC_CONNECTOR_YB) already exists."; \
+			else \
+				curl -sf --max-time 20 -X POST \
+					http://$(KAFKA_CONNECT_SVC):8083/connectors \
+					-H "Content-Type: application/json" \
+					-d @/tmp/iidr_jdbc_sink-yb-test.json || { echo "[ERROR] Failed to register connector"; exit 1; }; \
+				echo; \
+				echo "[OK] IIDR JDBC sink connector (YugabyteDB) registered"; \
+				echo "[INFO] Waiting 5s for connector to start..."; \
+				sleep 5; \
+			fi'; \
+	fi
 
 # =============================================================================
 # Testing
@@ -353,23 +368,64 @@ run:
 
 verify: verify-mariadb verify-postgres verify-yugabyte
 
+# hack/scripts/iidr-test-producer.py emits PT inserts for ID 1/2/3, a UP update that
+# moves ID=2 to STATUS=PROCESSING, and a DL delete for ID=3 -- so a correct sink ends
+# with 2 rows, ID=1 present, ID=3 gone and ID=2 PROCESSING. The targets used to print
+# the table and exit 0 even when it was missing, which is the failure that matters most
+# here: it is exactly what a broken A_ENTTYP mapping looks like.
+IIDR_EXPECTED = 2|1|0|PROCESSING
+
 verify-mariadb:
 	@echo "=== MariaDB Results ==="
 	@echo "[INFO] MariaDB - TEST_ORDERS:"
 	@kubectl exec $(MARIADB_POD) -n $(NAMESPACE) -- mysql -h $(MARIADB_HOST) -u$(MARIADB_USER) -p$(MARIADB_PASS) -e \
-		"SELECT * FROM target_database.TEST_ORDERS ORDER BY ID;" 2>/dev/null || echo "Table not found or empty"
+		"SELECT * FROM target_database.TEST_ORDERS ORDER BY ID;" 2>/dev/null \
+		|| { echo "[FAIL] MariaDB TEST_ORDERS is missing or unreadable"; exit 1; }
+	@R=$$(kubectl exec $(MARIADB_POD) -n $(NAMESPACE) -- mysql -h $(MARIADB_HOST) -u$(MARIADB_USER) -p$(MARIADB_PASS) -N -B -e \
+		"SELECT CONCAT((SELECT COUNT(*) FROM target_database.TEST_ORDERS), '|', \
+		               (SELECT COUNT(*) FROM target_database.TEST_ORDERS WHERE ID=1), '|', \
+		               (SELECT COUNT(*) FROM target_database.TEST_ORDERS WHERE ID=3), '|', \
+		               (SELECT IFNULL(MAX(STATUS),'-') FROM target_database.TEST_ORDERS WHERE ID=2));" 2>/dev/null); \
+	echo "[INFO] rows|PT(ID=1)|DL(ID=3)|UP(ID=2 status) = $$R"; \
+	[ "$$R" = "$(IIDR_EXPECTED)" ] || { echo "[FAIL] expected $(IIDR_EXPECTED)"; exit 1; }
+	@echo "[OK] MariaDB: PT, UP and DL all applied"
 
 verify-postgres:
 	@echo "=== PostgreSQL Results ==="
 	@echo "[INFO] PostgreSQL - test_orders:"
 	@kubectl exec $(POSTGRES_POD) -n $(NAMESPACE) -- env PGPASSWORD=$(POSTGRES_PASS) psql -U $(POSTGRES_USER) -d $(POSTGRES_DB) -c \
-		"SELECT * FROM test_orders ORDER BY id;" 2>/dev/null || echo "Table not found or empty"
+		"SELECT * FROM test_orders ORDER BY id;" 2>/dev/null \
+		|| { echo "[FAIL] PostgreSQL test_orders is missing or unreadable"; exit 1; }
+	@R=$$(kubectl exec $(POSTGRES_POD) -n $(NAMESPACE) -- env PGPASSWORD=$(POSTGRES_PASS) psql -U $(POSTGRES_USER) -d $(POSTGRES_DB) -t -A -c \
+		"SELECT (SELECT COUNT(*) FROM test_orders) || '|' || \
+		        (SELECT COUNT(*) FROM test_orders WHERE id=1) || '|' || \
+		        (SELECT COUNT(*) FROM test_orders WHERE id=3) || '|' || \
+		        (SELECT COALESCE(MAX(status),'-') FROM test_orders WHERE id=2);" 2>/dev/null | tr -d ' '); \
+	echo "[INFO] rows|PT(id=1)|DL(id=3)|UP(id=2 status) = $$R"; \
+	[ "$$R" = "$(IIDR_EXPECTED)" ] || { echo "[FAIL] expected $(IIDR_EXPECTED)"; exit 1; }
+	@echo "[OK] PostgreSQL: PT, UP and DL all applied"
 
+# YugabyteDB is not part of base-infra-up, so this target reports SKIPPED when the pod
+# is absent instead of asserting. Previously an absent Yugabyte and a wrong result were
+# indistinguishable -- both printed "Table not found or empty" and passed.
 verify-yugabyte:
 	@echo "=== YugabyteDB Results ==="
-	@echo "[INFO] YugabyteDB - test_orders:"
-	@kubectl exec $(YB_POD) -n $(NAMESPACE) -- /home/yugabyte/bin/ysqlsh -h localhost -c \
-		"SELECT * FROM test_orders ORDER BY id;" 2>/dev/null || echo "Table not found or empty"
+	@if ! kubectl get pod $(YB_POD) -n $(NAMESPACE) >/dev/null 2>&1; then \
+		echo "[SKIP] $(YB_POD) is not deployed -- skipping YugabyteDB verification"; \
+	else \
+		echo "[INFO] YugabyteDB - test_orders:"; \
+		kubectl exec $(YB_POD) -n $(NAMESPACE) -- /home/yugabyte/bin/ysqlsh -h localhost -c \
+			"SELECT * FROM test_orders ORDER BY id;" 2>/dev/null \
+			|| { echo "[FAIL] YugabyteDB test_orders is missing or unreadable"; exit 1; }; \
+		R=$$(kubectl exec $(YB_POD) -n $(NAMESPACE) -- /home/yugabyte/bin/ysqlsh -h localhost -t -A -c \
+			"SELECT (SELECT COUNT(*) FROM test_orders) || '|' || \
+			        (SELECT COUNT(*) FROM test_orders WHERE id=1) || '|' || \
+			        (SELECT COUNT(*) FROM test_orders WHERE id=3) || '|' || \
+			        (SELECT COALESCE(MAX(status),'-') FROM test_orders WHERE id=2);" 2>/dev/null | tr -d ' '); \
+		echo "[INFO] rows|PT(id=1)|DL(id=3)|UP(id=2 status) = $$R"; \
+		[ "$$R" = "$(IIDR_EXPECTED)" ] || { echo "[FAIL] expected $(IIDR_EXPECTED)"; exit 1; }; \
+		echo "[OK] YugabyteDB: PT, UP and DL all applied"; \
+	fi
 
 # =============================================================================
 # Status

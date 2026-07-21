@@ -11,12 +11,11 @@
         "value.converter": "org.apache.kafka.connect.json.JsonConverter",
         "key.converter.schemas.enable": "false",
         "value.converter.schemas.enable": "false",
-        "document.id.strategy": "com.mongodb.kafka.connect.sink.processor.id.strategy.ProvidedInValueStrategy",
+        "document.id.strategy": "com.mongodb.kafka.connect.sink.processor.id.strategy.ProvidedInKeyStrategy",
         "writemodel.strategy": "com.mongodb.kafka.connect.sink.writemodel.strategy.ReplaceOneDefaultStrategy",
-        "transforms": "dropTombstones",
-        "transforms.dropTombstones.type": "org.apache.kafka.connect.transforms.Filter",
-        "transforms.dropTombstones.predicate": "isTombstone",
-        "predicates": "isTombstone",
-        "predicates.isTombstone.type": "org.apache.kafka.connect.transforms.predicates.RecordIsTombstone"
+        "delete.on.null.values": "true",
+        "transforms": "renameKeyId",
+        "transforms.renameKeyId.type": "org.apache.kafka.connect.transforms.ReplaceField$Key",
+        "transforms.renameKeyId.renames": "id:_id"
     }
 }
