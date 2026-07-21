@@ -97,20 +97,46 @@ setup-postgres:
 # Connector Registration
 # =============================================================================
 
+# Poll a connector's task until it reports RUNNING; abort on FAILED or on timeout.
+# Registering a connector only means the config was accepted -- the task can still die
+# straight afterwards (an Oracle restart mid-setup leaves the PDB closed and the task
+# dies with ORA-65024), and Connect does not restart a failed task on its own. Without
+# this gate the run continues against a dead pipeline and reports success.
+define wait_task_running
+	@ok=0; for i in $$(seq 1 30); do \
+		S=$$(kubectl exec $(CURL_POD) -n $(NAMESPACE) -- curl -s --max-time 10 \
+		     http://$(KAFKA_CONNECT_SVC):8083/connectors/$(1)/status 2>/dev/null); \
+		T=$$(echo "$$S" | sed -n 's/.*"tasks":\[{"id":[0-9]*,"state":"\([A-Z]*\)".*/\1/p'); \
+		if [ "$$T" = "RUNNING" ]; then ok=1; break; fi; \
+		if [ "$$T" = "FAILED" ]; then echo "[FAIL] $(1) task FAILED:"; echo "$$S"; exit 1; fi; \
+		sleep 2; \
+	done; \
+	[ "$$ok" = "1" ] || { echo "[FAIL] $(1) task did not reach RUNNING within 60s"; exit 1; }; \
+	echo "[OK] $(1) task RUNNING"
+endef
+
 register:
 	@echo "[INFO] Registering connectors on $(KAFKA_CONNECT_SVC)..."
+	@echo "[INFO] Removing connectors left over from a previous run..."
+	@kubectl exec $(CURL_POD) -n $(NAMESPACE) -- curl -s --max-time 10 -X DELETE \
+		http://$(KAFKA_CONNECT_SVC):8083/connectors/source_cdc_oracle_demo >/dev/null 2>&1 || true
+	@kubectl exec $(CURL_POD) -n $(NAMESPACE) -- curl -s --max-time 10 -X DELETE \
+		http://$(KAFKA_CONNECT_SVC):8083/connectors/sink_cdc_oracle_to_mariadb >/dev/null 2>&1 || true
+	@sleep 5
 	kubectl cp hack/source-debezium/oracle-free-demo.json $(CURL_POD):/tmp/source-connector.json -n $(NAMESPACE)
 	kubectl exec $(CURL_POD) -n $(NAMESPACE) -- curl -sf --max-time 10 -X POST \
 		http://$(KAFKA_CONNECT_SVC):8083/connectors \
 		-H "Content-Type: application/json" \
-		-d @/tmp/source-connector.json || echo "[ERROR] Failed to register source connector"
+		-d @/tmp/source-connector.json
+	$(call wait_task_running,source_cdc_oracle_demo)
 	@echo "[INFO] Waiting 30s for initial snapshot..."
 	@sleep 30
 	kubectl cp hack/sink-jdbc/cdc_oracle_mariadb-demo.json $(CURL_POD):/tmp/sink-connector.json -n $(NAMESPACE)
 	kubectl exec $(CURL_POD) -n $(NAMESPACE) -- curl -sf --max-time 10 -X POST \
 		http://$(KAFKA_CONNECT_SVC):8083/connectors \
 		-H "Content-Type: application/json" \
-		-d @/tmp/sink-connector.json || echo "[ERROR] Failed to register sink connector"
+		-d @/tmp/sink-connector.json
+	$(call wait_task_running,sink_cdc_oracle_to_mariadb)
 	@echo "[INFO] Waiting 10s for sync..."
 	@sleep 10
 	@echo "[OK] Connectors registered"
@@ -119,10 +145,28 @@ register:
 # Verification
 # =============================================================================
 
+# Asserts the CDC semantics exercised by test-run rather than the seed rows, so the
+# check still means something if the demo data changes: the snapshot carried 4 rows,
+# test-run adds ID=5, updates ID=1 and deletes ID=3, leaving 4 rows with ID=3 gone.
+# Printing the table without asserting made "Table not found or empty" a passing run.
 verify:
 	@echo "[INFO] Data in MariaDB target_database.target_orders:"
-	@kubectl exec $(MARIADB_POD) -- mysql -h $(MARIADB_HOST) -u$(MARIADB_USER) -p$(MARIADB_PASS) -e \
-		"SELECT * FROM target_database.target_orders ORDER BY ID;" 2>/dev/null || echo "Table not found or empty"
+	@kubectl exec $(MARIADB_POD) -n $(NAMESPACE) -- mysql -h $(MARIADB_HOST) -u$(MARIADB_USER) -p$(MARIADB_PASS) -e \
+		"SELECT * FROM target_database.target_orders ORDER BY ID;" 2>/dev/null \
+		|| { echo "[FAIL] target table is missing or unreadable"; exit 1; }
+	@echo "[INFO] Asserting CDC semantics..."
+	@R=$$(kubectl exec $(MARIADB_POD) -n $(NAMESPACE) -- mysql -h $(MARIADB_HOST) -u$(MARIADB_USER) -p$(MARIADB_PASS) -N -B -e \
+		"SELECT CONCAT((SELECT COUNT(*) FROM target_database.target_orders), '|', \
+		               (SELECT COUNT(*) FROM target_database.target_orders WHERE ID=5), '|', \
+		               (SELECT COUNT(*) FROM target_database.target_orders WHERE ID=3), '|', \
+		               (SELECT IFNULL(MAX(STATUS),'-') FROM target_database.target_orders WHERE ID=1));" 2>/dev/null); \
+	echo "[INFO] rows|insert(ID=5)|deleted(ID=3)|update(ID=1 status) = $$R"; \
+	if [ "$$R" != "4|1|0|COMPLETED" ]; then \
+		echo "[FAIL] expected 4|1|0|COMPLETED"; \
+		echo "       4 rows, ID=5 present (INSERT), ID=3 absent (DELETE), ID=1 COMPLETED (UPDATE)"; \
+		exit 1; \
+	fi
+	@echo "[OK] INSERT, UPDATE and DELETE all replicated"
 
 # =============================================================================
 # Testing
@@ -157,7 +201,10 @@ test-clean:
 		http://$(KAFKA_CONNECT_SVC):8083/connectors/sink_cdc_oracle_to_mariadb
 	@echo "[OK] Connectors deleted"
 	@echo "[INFO] Dropping Oracle source table..."
-	@echo "ALTER SESSION SET CONTAINER=$(ORACLE_PDB); DROP TABLE DEMO.SOURCE_ORDERS; EXIT;" \
+	@# One statement per line: sqlplus treats a single piped line as one statement, so
+	@# the previous "ALTER SESSION ...; DROP TABLE ...;" one-liner failed with ORA-00922
+	@# and left the source table behind while still reporting success.
+	-@printf "ALTER SESSION SET CONTAINER=$(ORACLE_PDB);\nDROP TABLE DEMO.SOURCE_ORDERS;\nEXIT;\n" \
 		| kubectl exec -i $(ORACLE_POD) -n $(NAMESPACE) -- sqlplus -S sys/oracle@localhost:1521/$(ORACLE_SID) as sysdba
 	@echo "[INFO] Dropping MariaDB target tables..."
 	-kubectl exec $(MARIADB_POD) -n $(NAMESPACE) -- mysql -h $(MARIADB_HOST) -u$(MARIADB_USER) -p$(MARIADB_PASS) \
