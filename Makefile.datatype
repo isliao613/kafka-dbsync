@@ -84,10 +84,26 @@ register:
 # Verification
 # =============================================================================
 
+# Compares the source and target row counts instead of just printing the table.
+# A datatype test whose target is empty or short is exactly the failure worth catching,
+# and "Table not found or empty" used to exit 0. Counting against Oracle rather than a
+# hardcoded number keeps this honest when the seed data in
+# hack/sql/oracle-datatype-test.sql changes.
 verify:
 	@echo "[INFO] Verifying data in MariaDB for datatype testing..."
-	@kubectl exec $(MARIADB_POD) -- mysql -h $(MARIADB_HOST) -u$(MARIADB_USER) -p$(MARIADB_PASS) -e \
-		"SELECT * FROM target_database.datatype_test ORDER BY ID;" 2>/dev/null || echo "Table not found or empty"
+	@kubectl exec $(MARIADB_POD) -n $(NAMESPACE) -- mysql -h $(MARIADB_HOST) -u$(MARIADB_USER) -p$(MARIADB_PASS) -e \
+		"SELECT * FROM target_database.datatype_test ORDER BY ID;" 2>/dev/null \
+		|| { echo "[FAIL] target table is missing or unreadable"; exit 1; }
+	@echo "[INFO] Comparing Oracle source and MariaDB target row counts..."
+	@SRC=$$(printf "SET HEADING OFF FEEDBACK OFF PAGESIZE 0\nSELECT COUNT(*) FROM DEMO.DATATYPE_TEST;\nEXIT;\n" \
+		| kubectl exec -i $(ORACLE_POD) -n $(NAMESPACE) -- sqlplus -S sys/oracle@localhost:1521/$(ORACLE_PDB) as sysdba 2>/dev/null \
+		| tr -d ' \t\r\n'); \
+	TGT=$$(kubectl exec $(MARIADB_POD) -n $(NAMESPACE) -- mysql -h $(MARIADB_HOST) -u$(MARIADB_USER) -p$(MARIADB_PASS) -N -B -e \
+		"SELECT COUNT(*) FROM target_database.datatype_test;" 2>/dev/null | tr -d ' \t\r\n'); \
+	echo "[INFO] Oracle source=$$SRC  MariaDB target=$$TGT"; \
+	if [ -z "$$SRC" ] || [ "$$SRC" = "0" ]; then echo "[FAIL] could not read the Oracle source count"; exit 1; fi; \
+	if [ "$$SRC" != "$$TGT" ]; then echo "[FAIL] row count mismatch -- not every source row replicated"; exit 1; fi
+	@echo "[OK] every source row replicated to MariaDB"
 
 # =============================================================================
 # Cleanup
