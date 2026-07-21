@@ -40,8 +40,110 @@ COPY sink/IidrCdcSinkConnector/src/ src/
 # Build JAR
 RUN mvn clean package -DskipTests -q
 
-# Stage 4: Final Kafka Connect image
-FROM confluentinc/cp-kafka-connect:7.8.0
+# Stage 4: Fetch Debezium plugins and JDBC drivers.
+# The cp-kafka-connect 8.x base is UBI9-minimal and ships no wget/curl/tar, so all
+# downloading, unpacking and jar patching happens here and is COPYed in below.
+FROM maven:3.9-eclipse-temurin-17 AS fetcher
+
+ARG DEBEZIUM_VERSION=3.5.2.Final
+ARG M2=https://repo1.maven.org/maven2
+
+WORKDIR /out
+
+# Debezium connectors -> /out/plugins/debezium-connector-*
+RUN mkdir -p /out/plugins && \
+    for c in oracle mysql mariadb sqlserver mongodb jdbc; do \
+      wget -q $M2/io/debezium/debezium-connector-$c/$DEBEZIUM_VERSION/debezium-connector-$c-$DEBEZIUM_VERSION-plugin.tar.gz -O /tmp/$c.tgz && \
+      tar zxf /tmp/$c.tgz -C /out/plugins && rm /tmp/$c.tgz; \
+    done
+
+# Security overlay on the Debezium bundles (drop-in patch-level bumps):
+#   pgjdbc CVE-2026-42198 - SCRAM PBKDF2 CPU-exhaustion DoS (debezium-connector-jdbc ships 42.7.7)
+#
+# kafka-clients CVE-2026-33557 (auth bypass via improper JWT validation) no longer needs an
+# overlay: 3.5.1 bundled the vulnerable 4.1.1, 3.5.2 bundles the fixed 4.1.2 upstream.
+# Restore the overlay if DEBEZIUM_VERSION is ever moved back below 3.5.2.
+RUN wget -q $M2/org/postgresql/postgresql/42.7.11/postgresql-42.7.11.jar -O /tmp/postgresql-42.7.11.jar && \
+    for d in $(find /out/plugins -name 'postgresql-42.*.jar' -printf '%h\n'); do \
+      rm -f $d/postgresql-42.*.jar && cp /tmp/postgresql-42.7.11.jar $d/; \
+    done
+
+# JDBC drivers -> /out/jdbc-lib (added to the Confluent JDBC connector's lib dir)
+#   mysql 8.4.0 LTS: 8.0.32 was vulnerable to CVE-2023-22102 (fixed in 8.2.0)
+#   pgjdbc 42.7.11:  supersedes the 42.4.4 that kafka-connect-jdbc bundles
+RUN mkdir -p /out/jdbc-lib && cd /out/jdbc-lib && \
+    wget -q $M2/com/mysql/mysql-connector-j/8.4.0/mysql-connector-j-8.4.0.jar && \
+    wget -q $M2/org/mariadb/jdbc/mariadb-java-client/3.5.7/mariadb-java-client-3.5.7.jar && \
+    wget -q $M2/com/yugabyte/jdbc-yugabytedb/42.7.3-yb-4/jdbc-yugabytedb-42.7.3-yb-4.jar && \
+    wget -q $M2/org/postgresql/postgresql/42.7.11/postgresql-42.7.11.jar && \
+    wget -q https://github.com/ClickHouse/clickhouse-java/releases/download/v0.4.6/clickhouse-jdbc-0.4.6.jar
+
+# SQL Server driver: keep only the jre11 runtime jar. The javadoc/sources jars and the
+# jre8 variant must not land on the classpath.
+RUN wget -q --no-check-certificate https://download.microsoft.com/download/aef8c909-5763-4b89-84e5-851b59eb082b/sqljdbc_12.10.2.0_enu.tar.gz -O /tmp/sqljdbc.tgz && \
+    tar zxf /tmp/sqljdbc.tgz -C /tmp && \
+    cp /tmp/sqljdbc_12.10/enu/jars/mssql-jdbc-12.10.2.jre11.jar /out/jdbc-lib/ && \
+    rm -rf /tmp/sqljdbc.tgz /tmp/sqljdbc_12.10
+
+# Replacements for vulnerable jars inside other Confluent plugin bundles:
+#   commons-io    CVE-2024-47554 - connect-transforms ships 2.11.0
+#   bouncycastle  CVE-2025-14813 - kafka-connect-s3 ships 1.78
+#   zookeeper     CVE-2026-24281, CVE-2026-24308 - kafka-connect-s3 ships 3.8.4
+#                 (unused in KRaft mode, but it is on the plugin classpath)
+#   aircompressor CVE-2025-67721 - kafka-connect-s3 ships 2.0.2
+RUN mkdir -p /out/transforms-lib /out/s3-lib /out/jmx && \
+    wget -q $M2/commons-io/commons-io/2.20.0/commons-io-2.20.0.jar -P /out/transforms-lib/ && \
+    wget -q $M2/org/bouncycastle/bcprov-jdk18on/1.84/bcprov-jdk18on-1.84.jar -P /out/s3-lib/ && \
+    wget -q $M2/org/apache/zookeeper/zookeeper/3.8.6/zookeeper-3.8.6.jar -P /out/s3-lib/ && \
+    wget -q $M2/org/apache/zookeeper/zookeeper-jute/3.8.6/zookeeper-jute-3.8.6.jar -P /out/s3-lib/ && \
+    wget -q $M2/io/airlift/aircompressor/2.0.3/aircompressor-2.0.3.jar -P /out/s3-lib/ && \
+    wget -q $M2/io/prometheus/jmx/jmx_prometheus_javaagent/1.0.1/jmx_prometheus_javaagent-1.0.1.jar -O /out/jmx/jmx_prometheus_javaagent.jar
+
+# jackson-databind CVE-2026-54512 / CVE-2026-54513 (both fixed in 2.21.4).
+# jackson-core moves with it to keep the 2.21.x set on one patch level.
+# Only the loose jars under /usr/share/java are patchable; see the note in the
+# final stage about the copies shaded into the s3 and mongodb connector fat jars.
+RUN mkdir -p /out/jackson && cd /out/jackson && \
+    wget -q $M2/com/fasterxml/jackson/core/jackson-databind/2.21.4/jackson-databind-2.21.4.jar && \
+    wget -q $M2/com/fasterxml/jackson/core/jackson-core/2.21.4/jackson-core-2.21.4.jar
+
+# netty CVE-2026-42583 (codec), CVE-2026-42579 (codec-dns),
+#       CVE-2026-44249 / CVE-2026-45416 / CVE-2026-50010 (handler),
+#       CVE-2026-45674 / CVE-2026-47691 (resolver-dns)
+# debezium-connector-oracle mixes 4.1.119/4.1.128 and kafka-serde-tools ships 4.1.133.
+# netty modules must share one version within a plugin directory, so each bundle's
+# whole set moves to 4.1.135.Final. The two module lists differ because the bundles
+# ship different subsets -- keep them in sync with what each bundle actually contains.
+ARG NETTY_VERSION=4.1.135.Final
+RUN set -e; \
+    dbz="buffer codec codec-dns common handler resolver resolver-dns transport \
+         transport-classes-epoll transport-native-unix-common"; \
+    serde="buffer codec codec-dns codec-http codec-http2 codec-socks common handler \
+           handler-proxy resolver resolver-dns resolver-dns-classes-macos transport \
+           transport-classes-epoll transport-classes-kqueue transport-native-unix-common"; \
+    mkdir -p /out/netty-dbz /out/netty-serde; \
+    for m in $dbz;   do wget -q $M2/io/netty/netty-$m/$NETTY_VERSION/netty-$m-$NETTY_VERSION.jar -P /out/netty-dbz/;   done; \
+    for m in $serde; do wget -q $M2/io/netty/netty-$m/$NETTY_VERSION/netty-$m-$NETTY_VERSION.jar -P /out/netty-serde/; done; \
+    ne=$M2/io/netty/netty-transport-native-epoll/$NETTY_VERSION/netty-transport-native-epoll-$NETTY_VERSION; \
+    wget -q $ne-linux-x86_64.jar  -P /out/netty-dbz/; \
+    wget -q $ne-linux-aarch_64.jar -P /out/netty-dbz/; \
+    wget -q $ne-linux-x86_64.jar  -P /out/netty-serde/; \
+    wget -q $M2/io/netty/netty-transport-native-kqueue/$NETTY_VERSION/netty-transport-native-kqueue-$NETTY_VERSION-osx-x86_64.jar -P /out/netty-serde/; \
+    wget -q $M2/io/netty/netty-resolver-dns-native-macos/$NETTY_VERSION/netty-resolver-dns-native-macos-$NETTY_VERSION-osx-x86_64.jar -P /out/netty-serde/
+
+# azure-security-keyvault-keys CVE-2026-33117 (Key Vault security-feature bypass).
+# The base image's kafka-serde-tools ships 4.9.2; 4.10.6 is the fix and requires
+# azure-core 1.57.1 / azure-json 1.5.1 / azure-core-http-netty 1.16.3, so all four
+# move together. (Used only by Schema Registry field-level encryption, not by this
+# pipeline -- bumped rather than deleted so the KMS driver stays intact.)
+RUN mkdir -p /out/serde-lib && cd /out/serde-lib && \
+    wget -q $M2/com/azure/azure-security-keyvault-keys/4.10.6/azure-security-keyvault-keys-4.10.6.jar && \
+    wget -q $M2/com/azure/azure-core/1.57.1/azure-core-1.57.1.jar && \
+    wget -q $M2/com/azure/azure-json/1.5.1/azure-json-1.5.1.jar && \
+    wget -q $M2/com/azure/azure-core-http-netty/1.16.3/azure-core-http-netty-1.16.3.jar
+
+# Stage 5: Final Kafka Connect image
+FROM confluentinc/cp-kafka-connect:8.3.0
 
 USER root
 
@@ -51,46 +153,93 @@ RUN confluent-hub install --no-prompt confluentinc/kafka-connect-s3:10.6.7
 RUN confluent-hub install --no-prompt confluentinc/connect-transforms:1.4.6
 RUN confluent-hub install --no-prompt mongodb/kafka-connect-mongodb:2.0.3
 
-# Install debezium for Oracle
-RUN wget https://repo1.maven.org/maven2/io/debezium/debezium-connector-oracle/3.5.1.Final/debezium-connector-oracle-3.5.1.Final-plugin.tar.gz
-RUN tar zxvf debezium-connector-oracle-3.5.1.Final-plugin.tar.gz -C /usr/share/java/
-# Install debezium for MySQL
-RUN wget https://repo1.maven.org/maven2/io/debezium/debezium-connector-mysql/3.5.1.Final/debezium-connector-mysql-3.5.1.Final-plugin.tar.gz
-RUN tar zxvf debezium-connector-mysql-3.5.1.Final-plugin.tar.gz -C /usr/share/java/
-# Install debezium for MariaDB
-RUN wget https://repo1.maven.org/maven2/io/debezium/debezium-connector-mariadb/3.5.1.Final/debezium-connector-mariadb-3.5.1.Final-plugin.tar.gz
-RUN tar zxvf debezium-connector-mariadb-3.5.1.Final-plugin.tar.gz -C /usr/share/java/
-# Install debezium for SQLServer
-RUN wget https://repo1.maven.org/maven2/io/debezium/debezium-connector-sqlserver/3.5.1.Final/debezium-connector-sqlserver-3.5.1.Final-plugin.tar.gz
-RUN tar zxvf debezium-connector-sqlserver-3.5.1.Final-plugin.tar.gz -C /usr/share/java/
-# Install debezium for MongoDB
-RUN wget https://repo1.maven.org/maven2/io/debezium/debezium-connector-mongodb/3.5.1.Final/debezium-connector-mongodb-3.5.1.Final-plugin.tar.gz
-RUN tar zxvf debezium-connector-mongodb-3.5.1.Final-plugin.tar.gz -C /usr/share/java/
+ARG JDBC_LIB=/usr/share/confluent-hub-components/confluentinc-kafka-connect-jdbc/lib
 
-# Install debezium for JDBC Sink
-RUN wget https://repo1.maven.org/maven2/io/debezium/debezium-connector-jdbc/3.5.1.Final/debezium-connector-jdbc-3.5.1.Final-plugin.tar.gz
-RUN tar zxvf debezium-connector-jdbc-3.5.1.Final-plugin.tar.gz -C /usr/share/java/
+# Debezium connectors (already security-patched in the fetcher stage)
+COPY --from=fetcher /out/plugins/ /usr/share/java/
 
-# Must put the mysql, mariadb, clickhouse, sqlserver driver into jdbc folder
-## mysql
-RUN wget https://dev.mysql.com/get/Downloads/Connector-J/mysql-connector-j-8.0.32.tar.gz
-RUN tar zxvf mysql-connector-j-8.0.32.tar.gz -C /usr/share/confluent-hub-components/confluentinc-kafka-connect-jdbc/lib
-## mariadb
-RUN wget https://repo1.maven.org/maven2/org/mariadb/jdbc/mariadb-java-client/3.5.7/mariadb-java-client-3.5.7.jar -P /usr/share/confluent-hub-components/confluentinc-kafka-connect-jdbc/lib/
-## clickhouse
-RUN wget https://github.com/ClickHouse/clickhouse-java/releases/download/v0.4.6/clickhouse-jdbc-0.4.6.jar -P /usr/share/confluent-hub-components/confluentinc-kafka-connect-jdbc/lib/
-## sqlserver
-RUN wget --no-check-certificate https://download.microsoft.com/download/aef8c909-5763-4b89-84e5-851b59eb082b/sqljdbc_12.10.2.0_enu.tar.gz
-RUN tar zxvf sqljdbc_12.10.2.0_enu.tar.gz -C /usr/share/confluent-hub-components/confluentinc-kafka-connect-jdbc/lib
-RUN mv /usr/share/confluent-hub-components/confluentinc-kafka-connect-jdbc/lib/sqljdbc_12.10/enu/jars/* /usr/share/confluent-hub-components/confluentinc-kafka-connect-jdbc/lib/
-## yugabyte
-RUN wget https://repo1.maven.org/maven2/com/yugabyte/jdbc-yugabytedb/42.7.3-yb-4/jdbc-yugabytedb-42.7.3-yb-4.jar -P /usr/share/confluent-hub-components/confluentinc-kafka-connect-jdbc/lib/
+# JDBC drivers, then drop the superseded jars Confluent bundles:
+#   postgresql-42.4.4 -> replaced by 42.7.11 (CVE-2026-42198)
+#   any mssql-jdbc *.jre8 -> replaced by 12.10.2.jre11
+# The jre8 removal is a glob rather than a pinned filename: the bundled version moves
+# with the base image and the Debezium release, and a pinned name silently stops
+# matching (7.8.0 shipped 12.8.2.jre8, 8.3.0 + Debezium 3.5.2 ship 12.4.2.jre8).
+COPY --from=fetcher /out/jdbc-lib/ ${JDBC_LIB}/
+RUN rm -f ${JDBC_LIB}/postgresql-42.4.4.jar ${JDBC_LIB}/mssql-jdbc-*.jre8.jar && \
+    for d in /usr/share/java/debezium-connector-jdbc /usr/share/java/debezium-connector-sqlserver; do \
+      if ls $d/mssql-jdbc-*.jre8.jar >/dev/null 2>&1; then \
+        rm -f $d/mssql-jdbc-*.jre8.jar && cp ${JDBC_LIB}/mssql-jdbc-12.10.2.jre11.jar $d/; \
+      fi; \
+    done
+
+# Patched jars for the remaining Confluent bundles
+COPY --from=fetcher /out/transforms-lib/ /usr/share/confluent-hub-components/confluentinc-connect-transforms/lib/
+RUN rm -f /usr/share/confluent-hub-components/confluentinc-connect-transforms/lib/commons-io-2.11.0.jar
+COPY --from=fetcher /out/s3-lib/ /usr/share/confluent-hub-components/confluentinc-kafka-connect-s3/lib/
+RUN S3=/usr/share/confluent-hub-components/confluentinc-kafka-connect-s3/lib && \
+    rm -f $S3/bcprov-jdk18on-1.78.jar $S3/zookeeper-3.8.4.jar $S3/zookeeper-jute-3.8.4.jar \
+          $S3/aircompressor-2.0.2.jar
+
+# Patched Azure SDK jars for kafka-serde-tools (CVE-2026-33117), superseding the base image's
+COPY --from=fetcher /out/serde-lib/ /usr/share/java/kafka-serde-tools/
+RUN rm -f /usr/share/java/kafka-serde-tools/azure-security-keyvault-keys-4.9.2.jar \
+          /usr/share/java/kafka-serde-tools/azure-core-1.56.0.jar \
+          /usr/share/java/kafka-serde-tools/azure-json-1.5.0.jar \
+          /usr/share/java/kafka-serde-tools/azure-core-http-netty-1.16.0.jar
+
+# netty 4.1.135.Final over the two bundles that ship vulnerable 4.1.119/4.1.128/4.1.133 sets.
+# Old versions are removed by glob so a stale pin cannot silently no-op; netty-tcnative
+# (2.0.77) and netty-nio-client are separate artifacts and are deliberately left alone.
+COPY --from=fetcher /out/netty-dbz/ /usr/share/java/debezium-connector-oracle/
+COPY --from=fetcher /out/netty-serde/ /usr/share/java/kafka-serde-tools/
+RUN rm -f /usr/share/java/debezium-connector-oracle/netty-*-4.1.119.Final*.jar \
+          /usr/share/java/debezium-connector-oracle/netty-*-4.1.128.Final*.jar \
+          /usr/share/java/kafka-serde-tools/netty-*-4.1.133.Final*.jar
+
+# jackson-databind CVE-2026-54512 / CVE-2026-54513 -> 2.21.4 (jackson-core follows).
+# Driven by find rather than a directory list: the base image ships 2.21.2 in six
+# places (confluent-hub-client, cp-base-java-micro, kafka, kafka-serde-tools,
+# rest-utils, schema-registry) and Trivy only reports three of them, so a list built
+# from the scan report silently leaves half the copies behind. The count is echoed and
+# a zero-match run fails the build, so upstream moving off 2.21.2 cannot pass unnoticed.
+COPY --from=fetcher /out/jackson/ /tmp/jackson/
+RUN set -e; n=0; \
+    for f in $(find /usr/share/java /usr/share/confluent-hub-components \
+                 \( -name 'jackson-databind-2.21.2.jar' -o -name 'jackson-core-2.21.2.jar' \)); do \
+      a=$(basename $f | sed -E 's/^jackson-(databind|core)-.*/\1/'); \
+      rm -f $f && cp /tmp/jackson/jackson-$a-2.21.4.jar $(dirname $f)/ && n=$((n+1)); \
+    done; \
+    echo "jackson: replaced $n jar(s) with 2.21.4"; \
+    [ "$n" -gt 0 ] || { echo "no jackson 2.21.2 jars matched -- pin is stale"; exit 1; }; \
+    rm -rf /tmp/jackson
+
+# Repair symlinks left dangling by the replacements above.
+# The base image deduplicates jars by symlinking one component directory at another
+# (schema-registry links its netty jars into kafka-serde-tools, for instance), so
+# swapping a jar in one directory silently breaks links elsewhere. Each dangling link
+# is repointed at the replacement artifact and renamed to carry the new version --
+# leaving the old filename would both misreport the version to a scanner and leave a
+# link whose name disagrees with its target. Unresolvable links fail the build.
+# The candidate glob anchors a digit right after the artifact stem: without it
+# "netty-transport" also matches netty-transport-classes-epoll and friends, and the
+# ambiguity aborts the build.
+RUN set -e; n=0; \
+    for l in $(find /usr/share/java /usr/share/confluent-hub-components -xtype l); do \
+      ld=$(dirname "$l"); t=$(readlink "$l"); \
+      td=$(cd "$ld" && cd "$(dirname "$t")" && pwd); \
+      stem=$(basename "$t" | sed -E 's/-[0-9].*\.jar$//'); \
+      set -- "$td/$stem"-[0-9]*.jar; \
+      { [ $# -eq 1 ] && [ -f "$1" ]; } || { echo "cannot repair dangling symlink $l -> $t"; exit 1; }; \
+      rm -f "$l"; ln -s "$1" "$ld/$(basename "$1")"; n=$((n+1)); \
+    done; \
+    echo "repaired $n dangling symlink(s)"; \
+    [ "$(find /usr/share/java /usr/share/confluent-hub-components -xtype l | wc -l)" -eq 0 ] || \
+      { echo "dangling symlinks remain"; exit 1; }
 
 # Install JMX agent
 # ref: https://github.com/debezium/debezium-examples/blob/main/monitoring/debezium-jmx-exporter/Dockerfile
 # https://thedataguy.in/monitor-debezium-mysql-connector-with-prometheus-and-grafana/
-RUN mkdir /opt/jmx
-RUN wget https://repo1.maven.org/maven2/io/prometheus/jmx/jmx_prometheus_javaagent/1.0.1/jmx_prometheus_javaagent-1.0.1.jar -O /opt/jmx/jmx_prometheus_javaagent.jar
+COPY --from=fetcher /out/jmx/jmx_prometheus_javaagent.jar /opt/jmx/jmx_prometheus_javaagent.jar
 COPY config.yml /opt/jmx/config.yml
 COPY connect-distributed /usr/bin/connect-distributed
 
@@ -101,11 +250,10 @@ COPY --from=smt-builder /build/target/legacy-charset-smt-1.0.0.jar /usr/share/ja
 COPY --from=iidr-smt-builder /build/target/iidr-to-jdbc-sink-smt-1.0.0.jar /usr/share/java/iidr-to-jdbc-sink-smt-1.0.0.jar
 
 # Create IIDR CDC Sink Connector plugin directory with JDBC drivers
-RUN mkdir -p /usr/share/java/iidr-cdc-sink-connector
 COPY --from=sink-builder /build/target/iidr-cdc-sink-connector-1.0.0.jar /usr/share/java/iidr-cdc-sink-connector/
 # Copy JDBC drivers to connector plugin directory (must be in same directory for classpath)
-RUN cp /usr/share/confluent-hub-components/confluentinc-kafka-connect-jdbc/lib/mariadb-java-client-*.jar /usr/share/java/iidr-cdc-sink-connector/ && \
-    cp /usr/share/confluent-hub-components/confluentinc-kafka-connect-jdbc/lib/mysql-connector-j-8.0.32/mysql-connector-j-8.0.32.jar /usr/share/java/iidr-cdc-sink-connector/ && \
-    cp /usr/share/confluent-hub-components/confluentinc-kafka-connect-jdbc/lib/postgresql-*.jar /usr/share/java/iidr-cdc-sink-connector/ && \
-    cp /usr/share/confluent-hub-components/confluentinc-kafka-connect-jdbc/lib/jdbc-yugabytedb-*.jar /usr/share/java/iidr-cdc-sink-connector/ && \
-    cp /usr/share/confluent-hub-components/confluentinc-kafka-connect-jdbc/lib/mssql-jdbc-*.jar /usr/share/java/iidr-cdc-sink-connector/ 2>/dev/null || true
+RUN cp ${JDBC_LIB}/mariadb-java-client-*.jar /usr/share/java/iidr-cdc-sink-connector/ && \
+    cp ${JDBC_LIB}/mysql-connector-j-*.jar /usr/share/java/iidr-cdc-sink-connector/ && \
+    cp ${JDBC_LIB}/postgresql-*.jar /usr/share/java/iidr-cdc-sink-connector/ && \
+    cp ${JDBC_LIB}/jdbc-yugabytedb-*.jar /usr/share/java/iidr-cdc-sink-connector/ && \
+    cp ${JDBC_LIB}/mssql-jdbc-*.jar /usr/share/java/iidr-cdc-sink-connector/ 2>/dev/null || true
